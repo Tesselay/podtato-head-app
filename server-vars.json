@@ -1,6 +1,6 @@
 {
-  "component": "all",
-  "port": "8080",
-  "delay": "0s",
-  "secretMessage": ""
+  "PODTATO_COMPONENT": "all",
+  "PODTATO_PORT": "8080",
+  "PODTATO_STARTUP_DELAY": "0s",
+  "PODTATO_SECRET_MESSAGE": ""
 }
