@@ -1,0 +1,6 @@
+{
+  "component": "all",
+  "port": "8080",
+  "delay": "0s",
+  "secretMessage": ""
+}
