@@ -1,17 +1,11 @@
 # ----- Configuration ------------------------------------------------------------------
-AWS_CLI_PATH  := .aws/
-ENV_VARS_PATH := ../../server-vars.json
-SECRET_NAME   := podtato-head-app
-SECRET_STAMP  := .stamp-secret
+DEPLOYMENT_METHOD := deploy/AWS
 
 
 # ----- Phony Targets ------------------------------------------------------------------
 .PHONY: init
 
-init: $(SECRET_STAMP)
-
 
 # ----- Initialize ---------------------------------------------------------------------
-$(SECRET_STAMP): $(ENV_VARS_PATH)
-	./create-secret.sh $(AWS_CLI_PATH) $(ENV_VARS_PATH) $(SECRET_NAME)
-	touch $(SECRET_STAMP)
+init:
+	$(MAKE) -C $(DEPLOYMENT_METHOD) init
