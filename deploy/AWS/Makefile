@@ -6,9 +6,9 @@ SECRET_NAME   := podtato-head-app-secrets
 
 
 # ----- Phony Targets ------------------------------------------------------------------
-.PHONY: init export-env get
+.PHONY: init export-env
 
-init: $(AWS_VARS_PATH)
+init: $(AWS_VARS_PATH) export-env
 
 
 # ----- Recipes ------------------------------------------------------------------------
