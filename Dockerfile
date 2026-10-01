@@ -9,7 +9,9 @@ RUN go mod download
 
 COPY ./ ./
 
-RUN go build -o /workspace/podtatoserver ./cmd/
+RUN --mount=type=secret,id=buildenv \
+    set -a && . /run/secrets/buildenv && set +a && \
+    go build -o /workspace/podtatoserver ./cmd/
 
 FROM gcr.io/distroless/base-debian11:nonroot AS production
 
