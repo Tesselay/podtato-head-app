@@ -1,8 +1,8 @@
 #!/bin/bash
 
 declare -r AWS_CLI_PATH="$1"
-declare -r ENV_VARS_PATH="$2"
-declare -r AWS_VARS_PATH="$3"
+declare -r AWS_VARS_PATH="$2"
+declare -r ENV_VARS_PATH="$3"
 declare -r SECRET_NAME="$4"
 
 if docker run --rm -it -v ./${AWS_CLI_PATH}:/root/.aws public.ecr.aws/aws-cli/aws-cli secretsmanager describe-secret --secret-id "${SECRET_NAME}" &> /dev/null; then
