@@ -5,10 +5,10 @@ Podtato-head is a cloud-native application built to colorfully demonstrate deliv
 
 To run the application with Docker, the application entry at [cmd/main.go](cmd/main.go) requires 4 variables which can be set either by providing the var names when invoking the file or by setting the following env variables:
 
-- PODTATO_COMPONENT
-- PODTATO_PORT
-- PODTATO_STARTUP_DELAY
-- PODTATO_SECRET_MESSAGE
+- PODTATO_COMPONENT (Public)
+- PODTATO_PORT (Public)
+- PODTATO_STARTUP_DELAY (Public)
+- PODTATO_SECRET_MESSAGE (Private)
 
 The go-side names, default values and some usage info are detailed in the aforementioned file.
 
