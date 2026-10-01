@@ -13,9 +13,6 @@ IMAGE_NAME        := podtato-head-app
 init:
 	$(MAKE) -C $(DEPLOYMENT_METHOD) init
 
-$(ENV_VARS_PATH):
-	$(MAKE) -C $(DEPLOYMENT_METHOD) export-env
-
 
 # ----- Recipes ------------------------------------------------------------------------
 build:
