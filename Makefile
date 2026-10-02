@@ -9,7 +9,7 @@ IMAGE_NAME         := podtato-head-app
 
 
 # ----- Phony Targets ------------------------------------------------------------------
-.PHONY: init build run
+.PHONY: init build push run
 
 init: $(APP_ENV_VARS_PATH) $(AUTH_ENV_VARS_PATH)
 

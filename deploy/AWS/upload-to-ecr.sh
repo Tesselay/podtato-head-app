@@ -2,11 +2,11 @@
 SCRIPT_DIR=$(dirname -- "$(readlink -e -- "$0")")
 
 declare -r AWS_CLI_PATH="$1"
-declare -r AWS_VARS_PATH="$2"
+declare -r AWS_METADATA_PATH="$2"
 declare -r IMAGE_NAME="$3"
 
 declare -r IMAGE_ID=$(docker images "${IMAGE_NAME}:latest" --format "{{.ID}}")
-declare -r AWS_ECR_REPO_URI=$(jq -r ".repository.repositoryUri" "$AWS_VARS_PATH")
+declare -r AWS_ECR_REPO_URI=$(jq -r ".repository.repositoryUri" "$AWS_METADATA_PATH")
 
 docker run --rm -it \
     -v ./${AWS_CLI_PATH}:/root/.aws \
