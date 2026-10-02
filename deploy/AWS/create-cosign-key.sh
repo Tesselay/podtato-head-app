@@ -1,7 +1,7 @@
 #!/bin/bash
 
 SCRIPT_DIR=$(dirname -- "$(readlink -e -- "$0")")
-source "$SCRIPT_DIR/../../env-files.sh"
+source "$SCRIPT_DIR/../../scripts/env-files.sh"
 source "$SCRIPT_DIR/aws.sh"
 
 declare -r AWS_CLI_PATH="$1"
