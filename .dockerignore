@@ -1,4 +1,6 @@
 .github
+.git
+.gitignore
 deploy
 scripts
 *.env
