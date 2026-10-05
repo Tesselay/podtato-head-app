@@ -1,0 +1,6 @@
+.github
+deploy
+scripts
+*.env
+*.md
+Makefile
