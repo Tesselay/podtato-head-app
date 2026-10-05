@@ -1,9 +1,11 @@
 #!/bin/bash
 SCRIPT_DIR=$(dirname -- "$(readlink -e -- "$0")")
+source "$SCRIPT_DIR/../../scripts/env-files.sh"
 
 declare -r AWS_CLI_PATH="$1"
 declare -r AWS_METADATA_PATH="$2"
 declare -r AWS_ECR_REPO_NAME="$3"
+declare -r META_ENV_VARS_PATH="$4"
 
 # Split so the var contains the return code
 declare AWS_ECR_REPO
@@ -27,3 +29,6 @@ else
         --output json --no-cli-pager > "${AWS_METADATA_PATH}"
     echo "INFO: Command to create repository \"$AWS_ECR_REPO_NAME\" executed."
 fi
+
+declare -r AWS_ECR_REPO_URI=$(jq -r ".repository.repositoryUri" "$AWS_METADATA_PATH")
+add-or-update-env-var "IMAGE_NAME" "$AWS_ECR_REPO_URI" "$META_ENV_VARS_PATH"
