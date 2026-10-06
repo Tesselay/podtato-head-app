@@ -9,9 +9,7 @@ RUN go mod download
 
 COPY ./ ./
 
-RUN --mount=type=secret,id=buildenv \
-    set -a && . /run/secrets/buildenv && set +a && \
-    go build -o /workspace/podtatoserver ./cmd/
+RUN go build -o /workspace/podtatoserver ./cmd/
 
 FROM gcr.io/distroless/base-debian11:nonroot AS production
 
@@ -24,7 +22,5 @@ LABEL org.opencontainers.image.source="https://github.com/podtato-head/podtato-h
 WORKDIR /
 COPY --from=builder /workspace/podtatoserver .
 USER 65532:65532
-
-EXPOSE ${PODTATO_PORT}
 
 ENTRYPOINT ["/podtatoserver"]

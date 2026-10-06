@@ -2,13 +2,16 @@
 DEPLOYMENT_METHOD  := deploy/AWS
 APP_ENV_VARS_PATH  := app.env
 META_ENV_VARS_PATH := meta.env
+CONTAINER_NAME     := pha-runtime
 
 -include $(APP_ENV_VARS_PATH)
 -include $(META_ENV_VARS_PATH)
 
 
 # ----- Phony Targets ------------------------------------------------------------------
-.PHONY: init build push run sign digest login
+.PHONY: init login \
+		build digest sign push run \
+		build-test run-test
 
 
 # ----- Initialize ---------------------------------------------------------------------
@@ -21,7 +24,7 @@ login:
 
 # ----- Recipes ------------------------------------------------------------------------
 build:
-	docker buildx build --secret id=buildenv,src=$(APP_ENV_VARS_PATH) -t $(IMAGE_NAME):$(IMAGE_TAG) .
+	docker buildx build -t $(IMAGE_NAME):$(IMAGE_TAG) .
 
 $(META_ENV_VARS_PATH) digest:
 	./scripts/create-digest.sh $(IMAGE_NAME) $(IMAGE_TAG) $(META_ENV_VARS_PATH)
