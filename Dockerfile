@@ -25,4 +25,6 @@ WORKDIR /
 COPY --from=builder /workspace/podtatoserver .
 USER 65532:65532
 
+EXPOSE ${PODTATO_PORT}
+
 ENTRYPOINT ["/podtatoserver"]

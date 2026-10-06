@@ -32,5 +32,5 @@ sign:
 push: login
 	docker push $(IMAGE_NAME):$(IMAGE_TAG)
 
-run:
-	docker run --rm -it $(IMAGE_NAME)
+run: build
+	docker run --rm -it -p $(PODTATO_PORT):$(PODTATO_PORT) $(IMAGE_NAME)
