@@ -14,12 +14,6 @@
 
 # ----- Configuration ------------------------------------------------------------------
 AWS_CLI_PATH        := .aws/
-ENV           	    := dev
-ENV_PATH            := ../../.$(ENV).env
-META_ENV_PATH 		:= ../../.meta.env
-PROJECT 		    := practice-pha
-APP                 := podtato-head-app
-IMAGE_TAG           := $(shell git rev-parse --short HEAD)
 
 PUSH_PULL_PRINCIPAL := arn:aws:iam::285150348793:user/ecr_practice_project
 
@@ -57,10 +51,7 @@ help:
 
 # ----- Init ---------------------------------------------------------------------------
 deploy-secrets:
-	docker run --rm -i \
-	    --mount type=bind,src=./$(AWS_CLI_PATH),dst=/root/.aws,ro \
-		--mount type=bind,src=./$(SECRETS_CF),dst=/root/$(SECRETS_CF),ro \
-		public.ecr.aws/aws-cli/aws-cli cloudformation deploy \
+	aws cloudformation deploy \
 		--template-file /root/$(SECRETS_CF) \
 		--stack-name $(SECRETS_STACK) \
 		--capabilities CAPABILITY_IAM \
@@ -70,10 +61,7 @@ deploy-secrets:
 
 deploy-registry:
 	@test -n "$(PUSH_PULL_PRINCIPAL)" || { echo "Set PUSH_PULL_PRINCIPAL to the ARN of the user or role that pushes and pulls images." >&2; exit 1; }
-	docker run --rm -i \
-	    --mount type=bind,src=./$(AWS_CLI_PATH),dst=/root/.aws,ro \
-	    --mount type=bind,src=./$(REGISTRY_CF),dst=/root/$(REGISTRY_CF),ro \
-		public.ecr.aws/aws-cli/aws-cli cloudformation deploy \
+	aws cloudformation deploy \
 		--template-file /root/$(REGISTRY_CF) \
 		--stack-name $(REGISTRY_STACK) \
 		--capabilities CAPABILITY_IAM \
@@ -84,17 +72,13 @@ deploy-registry:
 secrets: $(ENV_PATH)
 	set -o pipefail; \
 	jq -c -Rn -f env-to-json.jq < $< \
-	  | docker run --rm -i \
-		--mount type=bind,src=./$(AWS_CLI_PATH),dst=/root/.aws,ro \
-		public.ecr.aws/aws-cli/aws-cli secretsmanager put-secret-value \
+	  | aws secretsmanager put-secret-value \
 	    --secret-id $(SECRETS_ID) --secret-string file:///dev/stdin \
 		> /dev/null
 	@echo "Updated $(SECRETS_ID) from $<"
 
 $(META_ENV_PATH):
-	docker run --rm -i \
-	    --mount type=bind,src=./$(AWS_CLI_PATH),dst=/root/.aws,ro \
-		public.ecr.aws/aws-cli/aws-cli cloudformation describe-stacks \
+	aws cloudformation describe-stacks \
 	    --stack-name $(REGISTRY_STACK) \
 		--query 'Stacks[0].Outputs[].[OutputKey,OutputValue]' \
 		--output text | tr '\t' '=' > $@
@@ -102,19 +86,13 @@ $(META_ENV_PATH):
 
 # ----- Recipes ------------------------------------------------------------------------
 read:
-	docker run --rm -i \
-	    --mount type=bind,src=./$(AWS_CLI_PATH),dst=/root/.aws,ro \
-		public.ecr.aws/aws-cli/aws-cli cloudformation describe-stacks \
+	aws cloudformation describe-stacks \
 		--stack-name $(REGISTRY_STACK) --query 'Stacks[0].Outputs' --output table
-	docker run --rm -i \
-	    --mount type=bind,src=./$(AWS_CLI_PATH),dst=/root/.aws,ro \
-		public.ecr.aws/aws-cli/aws-cli cloudformation describe-stacks \
+	aws cloudformation describe-stacks \
 		--stack-name $(SECRETS_STACK) --query 'Stacks[0].Outputs' --output table
 
 login:
-	docker run --rm -it \
-	    --mount type=bind,src=./$(AWS_CLI_PATH),dst=/root/.aws,ro \
-		public.ecr.aws/aws-cli/aws-cli ecr get-login-password \
+	aws ecr get-login-password \
 		| docker login --username AWS --password-stdin $(RegistryUri)
 
 push: login
@@ -127,17 +105,13 @@ $(COSIGN_PUB):
 	cosign public-key --key $(COSIGN_KEY) > $@
 
 sign:
-	digest=$$(docker run --rm -i \
-	    --mount type=bind,src=./$(AWS_CLI_PATH),dst=/root/.aws,ro \
-		public.ecr.aws/aws-cli/aws-cli ecr describe-images \
+	digest=$$(aws ecr describe-images \
 	    --repository-name $(REPOSITORY) --image-ids imageTag=$(IMAGE_TAG) \
 		--query 'imageDetails[0].imageDigest' --output text) && \
 	cosign sign --yes --key $(COSIGN_KEY) $(REPOSITORY_URI)@$$digest
 
 verify:
-	digest=$$(docker run --rm -i \
-	    --mount type=bind,src=./$(AWS_CLI_PATH),dst=/root/.aws,ro \
-		public.ecr.aws/aws-cli/aws-cli ecr describe-images \
+	digest=$$(aws ecr describe-images \
 	    --repository-name $(REPOSITORY) --image-ids imageTag=$(IMAGE_TAG) \
 		--query 'imageDetails[0].imageDigest' --output text) && \
 	cosign verify --yes --key $(COSIGN_KEY) $(REPOSITORY_URI)@$$digest
