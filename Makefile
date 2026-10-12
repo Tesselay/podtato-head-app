@@ -1,11 +1,17 @@
 # ----- Configuration ------------------------------------------------------------------
-DEPLOYMENT_METHOD  := deploy/AWS
-APP_ENV_VARS_PATH  := app.env
-META_ENV_VARS_PATH := meta.env
-CONTAINER_NAME     := pha-runtime
+PROJECT 	  := practice-pha
+APP           := podtato-head-app
+DEPLOYMENT    := deploy/AWS
+ENV           := dev
+ENV_PATH      := .$(ENV).env
+META_ENV_PATH := .meta.env
+CONTAINER     := pha-runtime
+IMAGE_TAG     := $(shell git rev-parse --short HEAD)
 
--include $(APP_ENV_VARS_PATH)
--include $(META_ENV_VARS_PATH)
+DEPLOY        := $(MAKE) -C $(DEPLOYMENT_METHOD) \
+				 PROJECT=$(PROJECT) APP=$(APP) ENV=$(ENV) ENV_PATH=$(abspath $(ENV_PATH)) META_ENV_PATH=$(abspath $(META_ENV_PATH))
+
+-include $(META_ENV_PATH)
 
 
 # ----- Phony Targets ------------------------------------------------------------------
@@ -14,34 +20,20 @@ CONTAINER_NAME     := pha-runtime
 		build-test run-test
 
 
-# ----- Initialize ---------------------------------------------------------------------
-$(APP_ENV_VARS_PATH) $(META_ENV_VARS_PATH) init:
-	$(MAKE) -C $(DEPLOYMENT_METHOD) init
-
-login:
-	$(MAKE) -C $(DEPLOYMENT_METHOD) login
-
-
 # ----- Recipes ------------------------------------------------------------------------
+init login secrets push sign verify $(META_ENV_PATH):
+	$(DEPLOY) $@
+
 build:
-	docker buildx build -t $(IMAGE_NAME):$(IMAGE_TAG) .
-
-$(META_ENV_VARS_PATH) digest:
-	./scripts/create-digest.sh $(IMAGE_NAME) $(IMAGE_TAG) $(META_ENV_VARS_PATH)
-
-sign:
-	cosign sign --key $(COSIGN_KEY_PATH) $(IMAGE_DIGEST)
-
-push: login
-	docker push $(IMAGE_NAME):$(IMAGE_TAG)
+	docker buildx build -t $(APP):$(IMAGE_TAG) .
 
 run: build
-	docker run --rm -it -p $(PODTATO_PORT):$(PODTATO_PORT) --env-file $(APP_ENV_VARS_PATH) --name $(CONTAINER_NAME) -d $(IMAGE_NAME):$(IMAGE_TAG)
+	docker run --rm -it -p $(PODTATO_PORT):$(PODTATO_PORT) --env-file $(ENV_PATH) --name $(CONTAINER_NAME) -d $(APP):$(IMAGE_TAG)
 
 
 # ----- Test ---------------------------------------------------------------------------
 build-test:
-	docker buildx build -t $(IMAGE_NAME):test .
+	docker buildx build -t $(APP):test .
 
 run-test: build-test
 	docker run --rm -it --env-file test.env -p 8090:8090 --name $(CONTAINER_NAME)-test -d $(IMAGE_NAME):test

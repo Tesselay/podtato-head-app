@@ -1,0 +1,262 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "practice-pha registry stack: KMS keys for ECR encryption and cosign signing, registry-wide scan on push, and the repository creation template for prod/ repositories. Everything here is long-lived and should rarely change.",
+  "Parameters": {
+    "ProjectName": {
+      "Type": "String",
+      "Default": "practice-pha",
+      "AllowedPattern": "^[a-z0-9-]+$",
+      "Description": "Prefix for key aliases and resource names. cosign finds its key through the alias."
+    },
+    "PushPullPrincipalArn": {
+      "Type": "String",
+      "Description": "ARN of the IAM user or role allowed to push and pull images in repositories created from the prod/ template"
+    }
+  },
+  "Resources": {
+    "EcrKey": {
+      "Type": "AWS::KMS::Key",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Metadata": {
+        "Notes": [
+          "Symmetric key that encrypts the images in repositories created from the prod/ template since ECR only accepts symmetric keys.",
+          "A repository keeps its encryption key for life, so this key is retained even if the stack is deleted or the resource replaced. Losing it would mean losing every image it encrypts.",
+          "Rotation replaces the key material yearly but keeps the same key ID and ARN, so nothing that references the key has to change.",
+          "The key policy is the root of trust for a KMS key. Its single statement (the same one AWS puts in a default key policy) lets IAM policies in this account grant access to the key; without it, IAM policies would have no effect on the key at all."
+        ]
+      },
+      "Properties": {
+        "Description": { "Fn::Sub": "${ProjectName}: encrypts ECR repositories created from the prod/ template" },
+        "KeySpec": "SYMMETRIC_DEFAULT",
+        "KeyUsage": "ENCRYPT_DECRYPT",
+        "EnableKeyRotation": true,
+        "KeyPolicy": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Sid": "EnableIamPolicies",
+              "Effect": "Allow",
+              "Principal": { "AWS": { "Fn::Sub": "arn:${AWS::Partition}:iam::${AWS::AccountId}:root" } },
+              "Action": "kms:*",
+              "Resource": "*"
+            }
+          ]
+        }
+      }
+    },
+    "EcrKeyAlias": {
+      "Type": "AWS::KMS::Alias",
+      "Metadata": {
+        "Notes": [
+          "A friendly name for the console and CLI. Aliases are not retained: they are only names, and deleting them with the stack keeps a re-deploy from colliding with leftovers."
+        ]
+      },
+      "Properties": {
+        "AliasName": { "Fn::Sub": "alias/${ProjectName}-ecr" },
+        "TargetKeyId": { "Ref": "EcrKey" }
+      }
+    },
+    "CosignKey": {
+      "Type": "AWS::KMS::Key",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Metadata": {
+        "Notes": [
+          "Asymmetric signing key for cosign, used as awskms:///alias/<ProjectName>-cosign. The private half never leaves KMS.",
+          "`make cosign.pub` exports the public half, so anyone can verify signatures without KMS access.",
+          "KeySpec and KeyUsage can never change after creation, and asymmetric keys have no automatic rotation.",
+          "Same key policy as EcrKey: access is granted through IAM, here via CosignSigningPolicy."
+        ]
+      },
+      "Properties": {
+        "Description": { "Fn::Sub": "${ProjectName}: signs container images with cosign" },
+        "KeySpec": "ECC_NIST_P256",
+        "KeyUsage": "SIGN_VERIFY",
+        "KeyPolicy": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Sid": "EnableIamPolicies",
+              "Effect": "Allow",
+              "Principal": { "AWS": { "Fn::Sub": "arn:${AWS::Partition}:iam::${AWS::AccountId}:root" } },
+              "Action": "kms:*",
+              "Resource": "*"
+            }
+          ]
+        }
+      }
+    },
+    "CosignKeyAlias": {
+      "Type": "AWS::KMS::Alias",
+      "Metadata": {
+        "Notes": [
+          "cosign addresses the key through this alias, so tools never need the key ID."
+        ]
+      },
+      "Properties": {
+        "AliasName": { "Fn::Sub": "alias/${ProjectName}-cosign" },
+        "TargetKeyId": { "Ref": "CosignKey" }
+      }
+    },
+    "CosignSigningPolicy": {
+      "Type": "AWS::IAM::ManagedPolicy",
+      "Metadata": {
+        "Notes": [
+          "Exactly the three KMS calls cosign makes when it signs with a KMS key. Attach this policy to the user or CI role that signs.",
+          "Verifying with cosign.pub needs no KMS access, only permission to pull the signature from ECR."
+        ]
+      },
+      "Properties": {
+        "Description": { "Fn::Sub": "${ProjectName}: sign container images with the cosign KMS key" },
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Action": ["kms:DescribeKey", "kms:GetPublicKey", "kms:Sign"],
+              "Resource": { "Fn::GetAtt": ["CosignKey", "Arn"] }
+            }
+          ]
+        }
+      }
+    },
+    "RegistryScanning": {
+      "Type": "AWS::ECR::RegistryScanningConfiguration",
+      "Metadata": {
+        "Notes": [
+          "Basic scan on push for every repository; it replaces the deprecated per-repository ScanOnPush setting.",
+          "There is only one scanning configuration per registry (account + region), so define it in exactly one stack."
+        ]
+      },
+      "Properties": {
+        "ScanType": "BASIC",
+        "Rules": [
+          {
+            "ScanFrequency": "SCAN_ON_PUSH",
+            "RepositoryFilters": [
+              {
+                "Filter": "*",
+                "FilterType": "WILDCARD"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "EcrTemplateRole": {
+      "Type": "AWS::IAM::Role",
+      "Metadata": {
+        "Notes": [
+          "The role ECR assumes while it creates repositories from the template. Required because the template uses tags and a KMS key.",
+          "Its KMS permissions cover EcrKey only, now that the key lives in this stack."
+        ]
+      },
+      "Properties": {
+        "Description": "Assumed by ECR when it creates repositories from the prod/ repository creation template",
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": ["ecr.amazonaws.com"]
+              },
+              "Action": ["sts:AssumeRole"]
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": { "Fn::Sub": "${ProjectName}-ecr-template-permissions" },
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "ecr:CreateRepository",
+                    "ecr:ReplicateImage",
+                    "ecr:TagResource"
+                  ],
+                  "Resource": "*"
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "kms:CreateGrant",
+                    "kms:RetireGrant",
+                    "kms:DescribeKey"
+                  ],
+                  "Resource": { "Fn::GetAtt": ["EcrKey", "Arn"] }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "ProdRepositoryCreationTemplate": {
+      "Type": "AWS::ECR::RepositoryCreationTemplate",
+      "Metadata": {
+        "Notes": [
+          "Blueprint for repositories ECR creates under prod/ (pull-through cache, create on push, replication).",
+          "Applied only at creation time."
+        ]
+      },
+      "Properties": {
+        "Prefix": "prod",
+        "Description": "For repositories under prod/ created by pull-through cache, create on push or replication",
+        "AppliedFor": ["PULL_THROUGH_CACHE", "CREATE_ON_PUSH", "REPLICATION"],
+        "EncryptionConfiguration": {
+          "EncryptionType": "KMS",
+          "KmsKey": { "Fn::GetAtt": ["EcrKey", "Arn"] }
+        },
+        "ResourceTags": [
+          {
+            "Key": "project",
+            "Value": { "Ref": "ProjectName" }
+          }
+        ],
+        "ImageTagMutability": "IMMUTABLE_WITH_EXCLUSION",
+        "ImageTagMutabilityExclusionFilters": [
+          {
+            "ImageTagMutabilityExclusionFilterType": "WILDCARD",
+            "ImageTagMutabilityExclusionFilterValue": "latest"
+          },
+          {
+            "ImageTagMutabilityExclusionFilterType": "WILDCARD",
+            "ImageTagMutabilityExclusionFilterValue": "beta*"
+          }
+        ],
+        "RepositoryPolicy": {
+          "Fn::Sub": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Sid\":\"AllowPushPullIAMRole\",\"Effect\":\"Allow\",\"Principal\":{\"AWS\":\"${PushPullPrincipalArn}\"},\"Action\":[\"ecr:BatchGetImage\",\"ecr:BatchCheckLayerAvailability\",\"ecr:CompleteLayerUpload\",\"ecr:GetDownloadUrlForLayer\",\"ecr:InitiateLayerUpload\",\"ecr:PutImage\",\"ecr:UploadLayerPart\"]}]}"
+        },
+        "LifecyclePolicy": "{\"rules\":[{\"rulePriority\":1,\"description\":\"Expire images older than 14 days\",\"selection\":{\"tagStatus\":\"any\",\"countType\":\"sinceImagePushed\",\"countUnit\":\"days\",\"countNumber\":14},\"action\":{\"type\":\"expire\"}}]}",
+        "CustomRoleArn": { "Fn::GetAtt": ["EcrTemplateRole", "Arn"] }
+      }
+    }
+  },
+  "Outputs": {
+    "EcrKeyArn": {
+      "Description": "Encrypts repositories created from the prod/ template",
+      "Value": { "Fn::GetAtt": ["EcrKey", "Arn"] }
+    },
+    "CosignKeyUri": {
+      "Description": "Pass this to cosign as --key",
+      "Value": { "Fn::Sub": "awskms:///${CosignKeyAlias}" }
+    },
+    "CosignSigningPolicyArn": {
+      "Description": "Attach to the user or CI role that signs images",
+      "Value": { "Ref": "CosignSigningPolicy" }
+    },
+    "TemplateRoleArn": {
+      "Description": "The role ECR assumes when it creates prod/ repositories",
+      "Value": { "Fn::GetAtt": ["EcrTemplateRole", "Arn"] }
+    },
+    "RegistryUri": {
+      "Description": "Registry host for docker login, push and pull",
+      "Value": { "Fn::Sub": "${AWS::AccountId}.dkr.ecr.${AWS::Region}.${AWS::URLSuffix}" }
+    }
+  }
+}

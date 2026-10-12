@@ -1,3 +1,3 @@
-deploy/AWS/aws-*.json
 deploy/AWS/.aws/
-meta.env
+.*.env
+.zed/settings.json
