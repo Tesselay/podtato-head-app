@@ -8,8 +8,8 @@ META_ENV_PATH := .meta.env
 CONTAINER     := pha-runtime
 IMAGE_TAG     := $(shell git rev-parse --short HEAD)
 
-DEPLOY        := $(MAKE) -C $(DEPLOYMENT_METHOD) \
-				 PROJECT=$(PROJECT) APP=$(APP) ENV=$(ENV) ENV_PATH=$(abspath $(ENV_PATH)) META_ENV_PATH=$(abspath $(META_ENV_PATH))
+DEPLOY        := $(MAKE) -C $(DEPLOYMENT) \
+				 PROJECT=$(PROJECT) APP=$(APP) ENV=$(ENV) ENV_PATH=$(abspath $(ENV_PATH)) META_ENV_PATH=$(abspath $(META_ENV_PATH)) IMAGE_TAG=$(IMAGE_TAG)
 
 -include $(META_ENV_PATH)
 
