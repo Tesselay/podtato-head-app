@@ -1,3 +1,9 @@
+# practice-pha infrastructure: entry Makefile that governs infrastructure deployment.
+# Actual deployment is offloaded to sub-Makefiles called from here.
+#
+#   make init
+#   make login                 Authenticate platform with Docker if applicable
+
 # ----- Configuration ------------------------------------------------------------------
 PROJECT 	  := practice-pha
 APP           := podtato-head-app
@@ -8,20 +14,33 @@ META_ENV_PATH := .meta.env
 CONTAINER     := pha-runtime
 IMAGE_TAG     := $(shell git rev-parse --short HEAD)
 
-DEPLOY        := $(MAKE) -C $(DEPLOYMENT) \
-				 PROJECT=$(PROJECT) APP=$(APP) ENV=$(ENV) ENV_PATH=$(abspath $(ENV_PATH)) META_ENV_PATH=$(abspath $(META_ENV_PATH)) IMAGE_TAG=$(IMAGE_TAG)
-
 -include $(META_ENV_PATH)
+
+REPOSITORY     := prod/$(APP)
+REPOSITORY_URI := $(RegistryUri)/$(REPOSITORY)
+
+DEPLOY         := $(MAKE) -C $(DEPLOYMENT) \
+				  PROJECT=$(PROJECT) APP=$(APP) IMAGE_TAG=$(IMAGE_TAG) \
+				  REPOSITORY=$(REPOSITORY) REPOSITORY_URI=$(REPOSITORY_URI) \
+				  ENV=$(ENV) ENV_PATH=$(abspath $(ENV_PATH)) \
+				  META_ENV_PATH=$(abspath $(META_ENV_PATH))
+
+SHELL               := /bin/bash
+.SHELLFLAGS         := -eu -o pipefail -c
+.DELETE_ON_ERROR:
 
 
 # ----- Phony Targets ------------------------------------------------------------------
-.PHONY: init login \
-		build digest sign push run \
-		build-test run-test
+.PHONY: init login secrets sign \
+		build run push sign \
+		build-test run-test verify
+
+help:
+	@sed -n '1,/^$$/s/^# \{0,1\}//p' $(firstword $(MAKEFILE_LIST))
 
 
 # ----- Recipes ------------------------------------------------------------------------
-init login secrets push sign verify $(META_ENV_PATH):
+init login secrets sign verify $(META_ENV_PATH):
 	$(DEPLOY) $@
 
 build:
@@ -29,6 +48,10 @@ build:
 
 run: build
 	docker run --rm -it -p $(PODTATO_PORT):$(PODTATO_PORT) --env-file $(ENV_PATH) --name $(CONTAINER_NAME) -d $(APP):$(IMAGE_TAG)
+
+push: login build
+	docker tag $(APP):$(IMAGE_TAG) $(REPOSITORY_URI):$(IMAGE_TAG)
+	docker push $(REPOSITORY_URI):$(IMAGE_TAG)
 
 
 # ----- Test ---------------------------------------------------------------------------

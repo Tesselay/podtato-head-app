@@ -7,10 +7,6 @@
       "Default": "practice-pha",
       "AllowedPattern": "^[a-z0-9-]+$",
       "Description": "Prefix for key aliases and resource names. cosign finds its key through the alias."
-    },
-    "PushPullPrincipalArn": {
-      "Type": "String",
-      "Description": "ARN of the IAM user or role allowed to push and pull images in repositories created from the prod/ template"
     }
   },
   "Resources": {
@@ -229,9 +225,6 @@
             "ImageTagMutabilityExclusionFilterValue": "beta*"
           }
         ],
-        "RepositoryPolicy": {
-          "Fn::Sub": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Sid\":\"AllowPushPullIAMRole\",\"Effect\":\"Allow\",\"Principal\":{\"AWS\":\"${PushPullPrincipalArn}\"},\"Action\":[\"ecr:BatchGetImage\",\"ecr:BatchCheckLayerAvailability\",\"ecr:CompleteLayerUpload\",\"ecr:GetDownloadUrlForLayer\",\"ecr:InitiateLayerUpload\",\"ecr:PutImage\",\"ecr:UploadLayerPart\"]}]}"
-        },
         "LifecyclePolicy": "{\"rules\":[{\"rulePriority\":1,\"description\":\"Expire images older than 14 days\",\"selection\":{\"tagStatus\":\"any\",\"countType\":\"sinceImagePushed\",\"countUnit\":\"days\",\"countNumber\":14},\"action\":{\"type\":\"expire\"}}]}",
         "CustomRoleArn": { "Fn::GetAtt": ["EcrTemplateRole", "Arn"] }
       }

@@ -1,21 +1,22 @@
-# practice-pha infrastructure: a thin wrapper around two CloudFormation stacks,
-# plus the two steps that deliberately stay outside CloudFormation
-# (secret values and cosign signing).
+# practice-pha infrastructure: a thin wrapper around two CloudFormation stacks and
+# cosign. Requires a SSO authenticated AWS profile (`aws sso`) as cosign works better
+# with it than the newer `aws login`. Most is configured here but requires some env
+# variables that are provided automatically when invoking via the root Makefile.
 #
-#   make deploy-registry PUSH_PULL_PRINCIPAL=arn:aws:iam::<account-id>:user/<you>
+#   make deploy-registry
 #   make deploy-secrets
 #   make secrets        	   pushes .$(ENV).env into Secrets Manager
-#   make cosign.pub
-#   make sign IMAGE=<repository>@sha256:<digest>
-#   make verify IMAGE=<repository>@sha256:<digest>
-#   make outputs ENV=dev       shows what both stacks produced
+#   make $(COSIGN_PUB)         Exports public key locally
+#   make sign
+#   make verify
+#   make $(META_ENV_PATH)      Exports key data of stacks
 #
 # Needs AWS CLI v2, jq and cosign.
 
 # ----- Configuration ------------------------------------------------------------------
 AWS_CLI_PATH        := .aws/
-
-PUSH_PULL_PRINCIPAL := arn:aws:iam::285150348793:user/ecr_practice_project
+AWS_PROFILE         := practice-pha
+AWS_PROFILE_IAM     := practice-pha-admin
 
 REGISTRY_CF         := cf-ecr-repository.json
 REGISTRY_STACK      := $(PROJECT)-registry
@@ -36,6 +37,8 @@ SHELL               := /bin/bash
 .SHELLFLAGS         := -eu -o pipefail -c
 .DELETE_ON_ERROR:
 
+export AWS_PROFILE
+
 
 # ----- Phony Targets ------------------------------------------------------------------
 .PHONY: help init \
@@ -51,8 +54,8 @@ help:
 
 # ----- Init ---------------------------------------------------------------------------
 deploy-secrets:
-	aws cloudformation deploy \
-		--template-file /root/$(SECRETS_CF) \
+	AWS_PROFILE=$(AWS_PROFILE_IAM) aws cloudformation deploy \
+		--template-file $(SECRETS_CF) \
 		--stack-name $(SECRETS_STACK) \
 		--capabilities CAPABILITY_IAM \
 		--no-fail-on-empty-changeset \
@@ -60,13 +63,12 @@ deploy-secrets:
 		--tags project=$(PROJECT) app=$(APP) env=$(ENV)
 
 deploy-registry:
-	@test -n "$(PUSH_PULL_PRINCIPAL)" || { echo "Set PUSH_PULL_PRINCIPAL to the ARN of the user or role that pushes and pulls images." >&2; exit 1; }
-	aws cloudformation deploy \
-		--template-file /root/$(REGISTRY_CF) \
+	AWS_PROFILE=$(AWS_PROFILE_IAM) aws cloudformation deploy \
+		--template-file $(REGISTRY_CF) \
 		--stack-name $(REGISTRY_STACK) \
 		--capabilities CAPABILITY_IAM \
 		--no-fail-on-empty-changeset \
-		--parameter-overrides ProjectName=$(PROJECT) PushPullPrincipalArn=$(PUSH_PULL_PRINCIPAL) \
+		--parameter-overrides ProjectName=$(PROJECT) \
 		--tags project=$(PROJECT)
 
 secrets: $(ENV_PATH)
@@ -95,10 +97,6 @@ login:
 	aws ecr get-login-password \
 		| docker login --username AWS --password-stdin $(RegistryUri)
 
-push: login
-	docker tag $(APP):$(IMAGE_TAG) $(REPOSITORY_URI):$(IMAGE_TAG)
-	docker push $(REPOSITORY_URI):$(IMAGE_TAG)
-
 
 # ----- Signing ------------------------------------------------------------------------
 $(COSIGN_PUB):
@@ -114,4 +112,4 @@ verify:
 	digest=$$(aws ecr describe-images \
 	    --repository-name $(REPOSITORY) --image-ids imageTag=$(IMAGE_TAG) \
 		--query 'imageDetails[0].imageDigest' --output text) && \
-	cosign verify --yes --key $(COSIGN_KEY) $(REPOSITORY_URI)@$$digest
+	cosign verify --key $(COSIGN_KEY) $(REPOSITORY_URI)@$$digest
