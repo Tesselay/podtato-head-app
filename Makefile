@@ -10,6 +10,7 @@ APP           := podtato-head-app
 DEPLOYMENT    := deploy/AWS
 ENV           := dev
 ENV_PATH      := .$(ENV).env
+TEST_ENV_PATH := .test.env
 META_ENV_PATH := .meta.env
 CONTAINER     := pha-runtime
 IMAGE_TAG     := $(shell git rev-parse --short HEAD)
@@ -31,9 +32,14 @@ SHELL               := /bin/bash
 
 
 # ----- Phony Targets ------------------------------------------------------------------
-.PHONY: init login secrets sign \
-		build run push sign \
-		build-test run-test verify
+.PHONY: init login secrets verify \
+		push push-image sign \
+		local build-local run-local \
+		test build-test run-test smoke-test teardown-test
+
+push: push-image sign
+local: build-local run-local
+test: build-test run-test smoke-test teardown-test
 
 help:
 	@sed -n '1,/^$$/s/^# \{0,1\}//p' $(firstword $(MAKEFILE_LIST))
@@ -47,9 +53,9 @@ build:
 	docker buildx build -t $(APP):$(IMAGE_TAG) .
 
 run: build
-	docker run --rm -it -p $(PODTATO_PORT):$(PODTATO_PORT) --env-file $(ENV_PATH) --name $(CONTAINER_NAME) -d $(APP):$(IMAGE_TAG)
+	docker run --rm -it -p $(PODTATO_PORT):$(PODTATO_PORT) --env-file $(ENV_PATH) --name $(CONTAINER) -d $(APP):$(IMAGE_TAG)
 
-push: login build
+push-image: login build
 	docker tag $(APP):$(IMAGE_TAG) $(REPOSITORY_URI):$(IMAGE_TAG)
 	docker push $(REPOSITORY_URI):$(IMAGE_TAG)
 
@@ -59,8 +65,11 @@ build-test:
 	docker buildx build -t $(APP):test .
 
 run-test: build-test
-	docker run --rm -it --env-file test.env -p 8090:8090 --name $(CONTAINER_NAME)-test -d $(IMAGE_NAME):test
+	docker run --rm -it --env-file $(TEST_ENV_PATH) -p 8090:8090 --name $(CONTAINER)-test -d $(APP):test
 
-test:
-	curl -o /dev/null -s -w "%{http_code}\n" http://127.0.0.1:8090/readyz
-	curl -o /dev/null -s -w "%{http_code}\n" http://127.0.0.1:8090/healthz
+smoke-test: run-test
+	curl -s -w "%{http_code}\n" http://127.0.0.1:8090/readyz
+	curl -s -w "%{http_code}\n" http://127.0.0.1:8090/healthz
+
+teardown-test:
+	docker container kill $(CONTAINER)-test
