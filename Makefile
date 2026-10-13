@@ -3,6 +3,16 @@
 #
 #   make init
 #   make login                 Authenticate platform with Docker if applicable
+#   make secrets               Pass secrets to platform if applicable
+#   make sign                  Sign image using cosign in registry
+#   make verify                Verify image using cosign in registry
+#   make push                  Workflow: Build, push and sign image
+#   make local                 Workflow: Build image, run and teardown container
+# 							       (test basic functioning)
+#   make test                  Workflow: Build image, run container, run smoke-test and
+#                                  teardown container
+#
+# Needs docker, cosign and a configured deployment method
 
 # ----- Configuration ------------------------------------------------------------------
 PROJECT 	  := practice-pha
@@ -16,6 +26,7 @@ CONTAINER     := pha-runtime
 IMAGE_TAG     := $(shell git rev-parse --short HEAD)
 
 -include $(META_ENV_PATH)
+-include $(ENV_PATH)
 
 REPOSITORY     := prod/$(APP)
 REPOSITORY_URI := $(RegistryUri)/$(REPOSITORY)
@@ -34,11 +45,11 @@ SHELL               := /bin/bash
 # ----- Phony Targets ------------------------------------------------------------------
 .PHONY: init login secrets verify \
 		push push-image sign \
-		local build-local run-local \
+		local build-local run-local teardown-local \
 		test build-test run-test smoke-test teardown-test
 
 push: push-image sign
-local: build-local run-local
+local: build-local run-local teardown-local
 test: build-test run-test smoke-test teardown-test
 
 help:
@@ -49,18 +60,24 @@ help:
 init login secrets sign verify $(META_ENV_PATH):
 	$(DEPLOY) $@
 
-build:
-	docker buildx build -t $(APP):$(IMAGE_TAG) .
-
-run: build
-	docker run --rm -it -p $(PODTATO_PORT):$(PODTATO_PORT) --env-file $(ENV_PATH) --name $(CONTAINER) -d $(APP):$(IMAGE_TAG)
-
 push-image: login build
 	docker tag $(APP):$(IMAGE_TAG) $(REPOSITORY_URI):$(IMAGE_TAG)
 	docker push $(REPOSITORY_URI):$(IMAGE_TAG)
 
 
+# ----- Local --------------------------------------------------------------------------
+build-local:
+	docker buildx build -t $(APP):$(IMAGE_TAG) .
+
+run-local: build-local
+	docker run --rm -it -p $(PODTATO_PORT):$(PODTATO_PORT) --env-file $(ENV_PATH) --name $(CONTAINER) -d $(APP):$(IMAGE_TAG)
+
+teardown-local:
+	docker container kill $(CONTAINER)
+
+
 # ----- Test ---------------------------------------------------------------------------
+# Ideally would set `ENV=test` and re-process file
 build-test:
 	docker buildx build -t $(APP):test .
 
