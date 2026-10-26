@@ -1,4 +1,20 @@
-## Technologies
+## Decisions
+
+### Private Egress
+
+**Choice:** Public NAT Gateways
+**Alternatives:** Single AZ NAT Gateway, PrivateLink endpoints
+
+A single AZ NAT gateway does not provide fault tolerance, i.e. it fails to meet the HA goal. PrivateLink endpoints would be a considerably more private solution but comes in at a cost of `0.012$/hour` for every endpoint provisioned in an AZ, whereas a NAT gateway incurs `0.052$/hour` in every AZ. The PrivateLink solution is more expensive after 4 endpoints and with 3 endpoints from ECS (`ecs`, `ecs-agent` and `ecs-telemetry`), 2 endpoints from ECR (`ecr.api`, `ecr.dkr`), 1 endpoint for SecretsManager and 1 endpoint for CloudWatch Logs, this is easily met.
+
+The cost per GB processed is negligible in this scenario.
+
+
+### IaC
+
+**Choice:** CloudFormation
+
+**Alternatives:** Terraform
 
 ### Image Registry
 
