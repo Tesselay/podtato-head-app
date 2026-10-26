@@ -25,6 +25,9 @@ SECRETS_CF          := cf-secrets.json
 SECRETS_STACK       := $(PROJECT)-$(APP)-$(ENV)-secrets
 SECRETS_ID          := $(APP)/$(ENV)/env
 
+NETWORK_CF          := cf-vpc.json
+NETWORK_STACK       := $(PROJECT)-network
+
 COSIGN_PUB          := cosign.pub
 COSIGN_KEY          := awskms:///alias/$(PROJECT)-cosign
 
@@ -41,18 +44,20 @@ export AWS_PROFILE
 
 
 # ----- Phony Targets ------------------------------------------------------------------
-.PHONY: help init \
+.PHONY: help init teardown-stack teardown-stack-all \
 		deploy-secrets deploy-registry secrets \
 		read login \
 		sign verify \
 
-init: deploy-registry deploy-secrets secrets $(META_ENV_PATH)
+init: deploy-registry deploy-secrets deploy-network secrets $(META_ENV_PATH)
+teardown-stack: teardown-network
+teardown-stack-all: teardown-network teardown-registry teardown-secrets
 
 help:
 	@sed -n '1,/^$$/s/^# \{0,1\}//p' $(firstword $(MAKEFILE_LIST))
 
 
-# ----- Init ---------------------------------------------------------------------------
+# ----- Deploy -------------------------------------------------------------------------
 deploy-secrets:
 	AWS_PROFILE=$(AWS_PROFILE_IAM) aws cloudformation deploy \
 		--template-file $(SECRETS_CF) \
@@ -71,6 +76,40 @@ deploy-registry:
 		--parameter-overrides ProjectName=$(PROJECT) \
 		--tags project=$(PROJECT)
 
+deploy-network:
+	AWS_PROFILE=$(AWS_PROFILE_IAM) aws cloudformation deploy \
+		--template-file $(NETWORK_CF) \
+		--stack-name $(NETWORK_STACK) \
+		--capabilities CAPABILITY_IAM \
+		--no-fail-on-empty-changeset \
+		--parameter-overrides ProjectName=$(PROJECT) \
+		--tags project=$(PROJECT)
+
+
+# ----- Teardown -----------------------------------------------------------------------
+teardown-secrets:
+	AWS_PROFILE=$(AWS_PROFILE_IAM) aws cloudformation delete-stack \
+		--stack-name $(SECRETS_STACK) \
+		--capabilities CAPABILITY_IAM \
+	AWS_PROFILE=$(AWS_PROFILE_IAM) aws cloudformation wait stack-delete-complete \
+		--stack-name $(SECRETS_STACK) \
+		--capabilities CAPABILITY_IAM \
+
+teardown-registry:
+	AWS_PROFILE=$(AWS_PROFILE_IAM) aws cloudformation delete-stack \
+		--stack-name $(REGISTRY_STACK) \
+		--capabilities CAPABILITY_IAM \
+	AWS_PROFILE=$(AWS_PROFILE_IAM) aws cloudformation wait stack-delete-complete \
+		--stack-name $(REGISTRY_STACK) \
+		--capabilities CAPABILITY_IAM \
+
+teardown-network:
+	AWS_PROFILE=$(AWS_PROFILE_IAM) aws cloudformation delete-stack \
+		--stack-name $(NETWORK_STACK)
+	AWS_PROFILE=$(AWS_PROFILE_IAM) aws cloudformation wait stack-delete-complete \
+		--stack-name $(NETWORK_STACK)
+
+# ----- Recipes ------------------------------------------------------------------------
 secrets: $(ENV_PATH)
 	set -o pipefail; \
 	jq -c -Rn -f env-to-json.jq < $< \
@@ -85,8 +124,6 @@ $(META_ENV_PATH):
 		--query 'Stacks[0].Outputs[].[OutputKey,OutputValue]' \
 		--output text | tr '\t' '=' > $@
 
-
-# ----- Recipes ------------------------------------------------------------------------
 read:
 	aws cloudformation describe-stacks \
 		--stack-name $(REGISTRY_STACK) --query 'Stacks[0].Outputs' --output table

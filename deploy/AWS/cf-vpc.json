@@ -1,0 +1,300 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "practice-pha network stack: VPC, public and app subnets in two AZs, internet gateway, a NAT gateway per AZ, security groups and the internet-facing ALB.",
+  "Parameters": {
+    "ProjectName": {
+      "Type": "String",
+      "Default": "practice-pha",
+      "AllowedPattern": "^[a-z0-9-]+$",
+      "Description": "Prefix for the Name tags."
+    },
+    "Az1": {
+      "Type": "AWS::EC2::AvailabilityZone::Name",
+      "Default": "eu-central-1a"
+    },
+    "Az2": {
+      "Type": "AWS::EC2::AvailabilityZone::Name",
+      "Default": "eu-central-1b"
+    },
+    "VpcCidr": {
+      "Type": "String",
+      "Default": "10.0.0.0/16"
+    },
+    "PublicSubnet1Cidr": {
+      "Type": "String",
+      "Default": "10.0.0.0/24"
+    },
+    "PrivateSubnet1Cidr": {
+      "Type": "String",
+      "Default": "10.0.10.0/24"
+    },
+    "PublicSubnet2Cidr": {
+      "Type": "String",
+      "Default": "10.0.1.0/24"
+    },
+    "PrivateSubnet2Cidr": {
+      "Type": "String",
+      "Default": "10.0.11.0/24"
+    }
+  },
+  "Resources": {
+    "PhaVpc": {
+      "Type": "AWS::EC2::VPC",
+      "Properties": {
+        "CidrBlock": { "Ref": "VpcCidr" },
+        "EnableDnsSupport": true,
+        "EnableDnsHostnames": true,
+        "Tags": [{ "Key": "Name", "Value": { "Fn::Sub": "${ProjectName}-vpc" } }]
+      }
+    },
+    "PhaIgw": {
+      "Type": "AWS::EC2::InternetGateway",
+      "Properties": {
+        "Tags": [{ "Key": "Name", "Value": { "Fn::Sub": "${ProjectName}-igw" } }]
+      }
+    },
+    "PhaVpcIgwAttachment": {
+      "Type": "AWS::EC2::VPCGatewayAttachment",
+      "Properties": {
+        "InternetGatewayId": { "Ref": "PhaIgw" },
+        "VpcId": { "Ref": "PhaVpc" }
+      }
+    },
+    "Pha1PublicSubnet": {
+      "Type": "AWS::EC2::Subnet",
+      "Properties": {
+        "VpcId": { "Ref": "PhaVpc" },
+        "AvailabilityZone": { "Ref": "Az1" },
+        "CidrBlock": { "Ref": "PublicSubnet1Cidr" },
+        "Tags": [{ "Key": "Name", "Value": { "Fn::Sub": "${ProjectName}-public-a" } }]
+      }
+    },
+    "Pha1AppSubnet": {
+      "Type": "AWS::EC2::Subnet",
+      "Properties": {
+        "VpcId": { "Ref": "PhaVpc" },
+        "AvailabilityZone": { "Ref": "Az1" },
+        "CidrBlock": { "Ref": "PrivateSubnet1Cidr" },
+        "Tags": [{ "Key": "Name", "Value": { "Fn::Sub": "${ProjectName}-app-a" } }]
+      }
+    },
+    "Pha1Ngw": {
+      "Type": "AWS::EC2::NatGateway",
+      "Properties": {
+        "AllocationId": { "Fn::GetAtt": ["Pha1NatEip", "AllocationId"] },
+        "SubnetId": { "Ref": "Pha1PublicSubnet" },
+        "Tags": [{ "Key": "Name", "Value": { "Fn::Sub": "${ProjectName}-nat-a" } }]
+      }
+    },
+    "Pha1NatEip": {
+      "Type": "AWS::EC2::EIP",
+      "DependsOn": "PhaVpcIgwAttachment",
+      "Properties": {
+        "Domain": "vpc",
+        "Tags": [{ "Key": "Name", "Value": { "Fn::Sub": "${ProjectName}-nat-a-eip" } }]
+      }
+    },
+    "Pha2PublicSubnet": {
+      "Type": "AWS::EC2::Subnet",
+      "Properties": {
+        "VpcId": { "Ref": "PhaVpc" },
+        "AvailabilityZone": { "Ref": "Az2" },
+        "CidrBlock": { "Ref": "PublicSubnet2Cidr" },
+        "Tags": [{ "Key": "Name", "Value": { "Fn::Sub": "${ProjectName}-public-b" } }]
+      }
+    },
+    "Pha2AppSubnet": {
+      "Type": "AWS::EC2::Subnet",
+      "Properties": {
+        "VpcId": { "Ref": "PhaVpc" },
+        "AvailabilityZone": { "Ref": "Az2" },
+        "CidrBlock": { "Ref": "PrivateSubnet2Cidr" },
+        "Tags": [{ "Key": "Name", "Value": { "Fn::Sub": "${ProjectName}-app-b" } }]
+      }
+    },
+    "Pha2Ngw": {
+      "Type": "AWS::EC2::NatGateway",
+      "Properties": {
+        "AllocationId": { "Fn::GetAtt": ["Pha2NatEip", "AllocationId"] },
+        "SubnetId": { "Ref": "Pha2PublicSubnet" },
+        "Tags": [{ "Key": "Name", "Value": { "Fn::Sub": "${ProjectName}-nat-b" } }]
+      }
+    },
+    "Pha2NatEip": {
+      "Type": "AWS::EC2::EIP",
+      "DependsOn": "PhaVpcIgwAttachment",
+      "Properties": {
+        "Domain": "vpc",
+        "Tags": [{ "Key": "Name", "Value": { "Fn::Sub": "${ProjectName}-nat-b-eip" } }]
+      }
+    },
+    "PhaSgElb": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "Security group for the practice project load balancer.",
+        "SecurityGroupIngress": [{
+          "IpProtocol": "tcp",
+          "FromPort": 80,
+          "ToPort": 80,
+          "CidrIp": "0.0.0.0/0",
+          "Description": "HTTP from anywhere"
+        }],
+        "SecurityGroupEgress": [{
+          "IpProtocol": "tcp",
+          "FromPort": 8080,
+          "ToPort": 8080,
+          "DestinationSecurityGroupId": { "Ref": "PhaSgTask" },
+          "Description": "App traffic and health checks to the tasks"
+        }],
+        "VpcId": { "Ref": "PhaVpc" },
+        "Tags": [{ "Key": "Name", "Value": { "Fn::Sub": "${ProjectName}-sg-alb" } }]
+      }
+    },
+    "PhaSgTask": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "Security group for the network interfaces of the practice project app tasks (awsvpc).",
+        "SecurityGroupEgress": [{
+          "IpProtocol": "tcp",
+          "FromPort": 443,
+          "ToPort": 443,
+          "CidrIp": "0.0.0.0/0",
+          "Description": "HTTPS calls made by the app itself"
+        }],
+        "VpcId": { "Ref": "PhaVpc" },
+        "Tags": [{ "Key": "Name", "Value": { "Fn::Sub": "${ProjectName}-sg-task" } }]
+      }
+    },
+    "PhaSgTaskIngressFromElb": {
+      "Type": "AWS::EC2::SecurityGroupIngress",
+      "Properties": {
+        "GroupId": { "Fn::GetAtt": ["PhaSgTask", "GroupId"] },
+        "SourceSecurityGroupId": { "Fn::GetAtt": ["PhaSgElb", "GroupId"] },
+        "IpProtocol": "tcp", "FromPort": 8080, "ToPort": 8080,
+        "Description": "App traffic and health checks from the ALB"
+      }
+    },
+    "PhaRtPublic": {
+      "Type": "AWS::EC2::RouteTable",
+      "Properties": {
+        "VpcId": { "Ref": "PhaVpc" },
+        "Tags": [{ "Key": "Name", "Value": { "Fn::Sub": "${ProjectName}-rt-public" } }]
+      }
+    },
+    "PhaRtPublicRoute": {
+      "Type": "AWS::EC2::Route",
+      "DependsOn": "PhaVpcIgwAttachment",
+      "Properties": {
+        "RouteTableId": { "Ref": "PhaRtPublic" },
+        "DestinationCidrBlock": "0.0.0.0/0",
+        "GatewayId": { "Ref": "PhaIgw" }
+      }
+    },
+    "PhaRtPublicSubnet1": {
+      "Type": "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties": {
+        "RouteTableId": { "Ref": "PhaRtPublic" },
+        "SubnetId": { "Ref": "Pha1PublicSubnet" }
+      }
+    },
+    "PhaRtPublicSubnet2": {
+      "Type": "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties": {
+        "RouteTableId": { "Ref": "PhaRtPublic" },
+        "SubnetId": { "Ref": "Pha2PublicSubnet" }
+      }
+    },
+    "PhaRtApp1": {
+      "Type": "AWS::EC2::RouteTable",
+      "Properties": {
+        "VpcId": { "Ref": "PhaVpc" },
+        "Tags": [{ "Key": "Name", "Value": { "Fn::Sub": "${ProjectName}-rt-app-a" } }]
+      }
+    },
+    "PhaRtApp1Route": {
+      "Type": "AWS::EC2::Route",
+      "Properties": {
+        "RouteTableId": { "Ref": "PhaRtApp1" },
+        "DestinationCidrBlock": "0.0.0.0/0",
+        "NatGatewayId": { "Ref": "Pha1Ngw" }
+      }
+    },
+    "PhaRtAppSubnet1": {
+      "Type": "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties": {
+        "RouteTableId": { "Ref": "PhaRtApp1" },
+        "SubnetId": { "Ref": "Pha1AppSubnet" }
+      }
+    },
+    "PhaRtApp2": {
+      "Type": "AWS::EC2::RouteTable",
+      "Properties": {
+        "VpcId": { "Ref": "PhaVpc" },
+        "Tags": [{ "Key": "Name", "Value": { "Fn::Sub": "${ProjectName}-rt-app-b" } }]
+      }
+    },
+    "PhaRtApp2Route": {
+      "Type": "AWS::EC2::Route",
+      "Properties": {
+        "RouteTableId": { "Ref": "PhaRtApp2" },
+        "DestinationCidrBlock": "0.0.0.0/0",
+        "NatGatewayId": { "Ref": "Pha2Ngw" }
+      }
+    },
+    "PhaRtAppSubnet2": {
+      "Type": "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties": {
+        "RouteTableId": { "Ref": "PhaRtApp2" },
+        "SubnetId": { "Ref": "Pha2AppSubnet" }
+      }
+    },
+    "PhaElb": {
+      "Type": "AWS::ElasticLoadBalancingV2::LoadBalancer",
+      "DependsOn": "PhaVpcIgwAttachment",
+      "Properties": {
+        "Type": "application",
+        "Scheme": "internet-facing",
+        "Subnets": [
+          { "Ref": "Pha1PublicSubnet" },
+          { "Ref": "Pha2PublicSubnet" }
+        ],
+        "SecurityGroups": [
+          { "Ref": "PhaSgElb" }
+        ],
+        "LoadBalancerAttributes": [
+          {
+            "Key": "routing.http.drop_invalid_header_fields.enabled",
+            "Value": "true"
+          }
+        ],
+        "Tags": [{ "Key": "Name", "Value": { "Fn::Sub": "${ProjectName}-alb" } }]
+      }
+    }
+  },
+  "Outputs": {
+    "VpcId": {
+      "Value": { "Ref": "PhaVpc" },
+      "Export": { "Name": { "Fn::Sub": "${AWS::StackName}-VpcId" } }
+    },
+    "AppSubnetIds": {
+      "Description": "Comma-separated; use Fn::Split in the importing stack.",
+      "Value": { "Fn::Join": [",", [{ "Ref": "Pha1AppSubnet" }, { "Ref": "Pha2AppSubnet" }]] },
+      "Export": { "Name": { "Fn::Sub": "${AWS::StackName}-AppSubnetIds" } }
+    },
+    "TaskSecurityGroupId": {
+      "Description": "For the ECS service's awsvpcConfiguration.",
+      "Value": { "Fn::GetAtt": ["PhaSgTask", "GroupId"] },
+      "Export": { "Name": { "Fn::Sub": "${AWS::StackName}-TaskSecurityGroupId" } }
+    },
+    "LoadBalancerArn": {
+      "Description": "For the listener in the service stack.",
+      "Value": { "Ref": "PhaElb" },
+      "Export": { "Name": { "Fn::Sub": "${AWS::StackName}-LoadBalancerArn" } }
+    },
+    "LoadBalancerDnsName": {
+      "Description": "Open http://<this name> in a browser once a listener exists.",
+      "Value": { "Fn::GetAtt": ["PhaElb", "DNSName"] },
+      "Export": { "Name": { "Fn::Sub": "${AWS::StackName}-LoadBalancerDnsName" } }
+    }
+  }
+}
