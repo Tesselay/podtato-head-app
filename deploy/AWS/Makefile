@@ -28,6 +28,9 @@ SECRETS_ID          := $(APP)/$(ENV)/env
 NETWORK_CF          := cf-vpc.json
 NETWORK_STACK       := $(PROJECT)-network
 
+ECS_CF              := cf-ecs.json
+ECS_STACK           := $(PROJECT)-ecs
+
 COSIGN_PUB          := cosign.pub
 COSIGN_KEY          := awskms:///alias/$(PROJECT)-cosign
 
@@ -49,9 +52,9 @@ export AWS_PROFILE
 		read login \
 		sign verify \
 
-init: deploy-registry deploy-secrets deploy-network secrets $(META_ENV_PATH)
-teardown-stack: teardown-network
-teardown-stack-all: teardown-network teardown-registry teardown-secrets
+init: deploy-registry deploy-secrets secrets deploy-network deploy-ecs $(META_ENV_PATH)
+teardown-stack: teardown-ecs teardown-network
+teardown-stack-all: teardown-stack teardown-registry teardown-secrets
 
 help:
 	@sed -n '1,/^$$/s/^# \{0,1\}//p' $(firstword $(MAKEFILE_LIST))
@@ -85,6 +88,15 @@ deploy-network:
 		--parameter-overrides ProjectName=$(PROJECT) \
 		--tags project=$(PROJECT)
 
+deploy-ecs:
+	AWS_PROFILE=$(AWS_PROFILE_IAM) aws cloudformation deploy \
+		--template-file $(ECS_CF) \
+		--stack-name $(ECS_STACK) \
+		--capabilities CAPABILITY_IAM \
+		--no-fail-on-empty-changeset \
+		--parameter-overrides ProjectName=$(PROJECT) NetworkStackName=$(NETWORK_STACK) \
+		--tags project=$(PROJECT)
+
 
 # ----- Teardown -----------------------------------------------------------------------
 teardown-secrets:
@@ -108,6 +120,12 @@ teardown-network:
 		--stack-name $(NETWORK_STACK)
 	AWS_PROFILE=$(AWS_PROFILE_IAM) aws cloudformation wait stack-delete-complete \
 		--stack-name $(NETWORK_STACK)
+
+teardown-ecs:
+	AWS_PROFILE=$(AWS_PROFILE_IAM) aws cloudformation delete-stack \
+		--stack-name $(ECS_STACK)
+	AWS_PROFILE=$(AWS_PROFILE_IAM) aws cloudformation wait stack-delete-complete \
+		--stack-name $(ECS_STACK)
 
 # ----- Recipes ------------------------------------------------------------------------
 secrets: $(ENV_PATH)

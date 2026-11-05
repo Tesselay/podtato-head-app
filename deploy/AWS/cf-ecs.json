@@ -1,0 +1,79 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "practice-pha ECS",
+  "Parameters": {
+    "ProjectName": {
+      "Type": "String",
+      "Default": "practice-pha",
+      "AllowedPattern": "^[a-z0-9-]+$",
+      "Description": "Prefix for key aliases and resource names."
+    },
+    "ClusterName": {
+      "Type": "String",
+      "Default": "pha-cluster",
+      "AllowedPattern": "^[a-z0-9-]+$"
+    },
+    "EcsAmiId": {
+      "Type": "AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>",
+      "Default": "/aws/service/ecs/optimized-ami/amazon-linux-2023/recommended/image_id"
+    },
+    "InstanceType": {
+      "Type": "String",
+      "Default": "t3.micro",
+      "Description": "Each awsvpc task takes one network interface on its host: t3.micro (2 interfaces) fits one task, t3.small (3) fits two."
+    },
+    "NetworkStackName": {
+      "Type": "String",
+      "Description": "Name of the stack deployed from cf-vpc.json"
+    }
+  },
+  "Resources": {
+    "PhaEcsCluster": {
+      "Type": "AWS::ECS::Cluster",
+      "Properties": { "ClusterName": { "Ref": "ClusterName" } }
+    },
+    "PhaEcsInstanceRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [{ "Effect": "Allow", "Principal": { "Service": "ec2.amazonaws.com" }, "Action": "sts:AssumeRole" }]
+        },
+        "ManagedPolicyArns": [
+          { "Fn::Sub": "arn:${AWS::Partition}:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role" },
+          { "Fn::Sub": "arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore" }
+        ]
+      }
+    },
+    "PhaEcsInstanceProfile": {
+      "Type": "AWS::IAM::InstanceProfile",
+      "Properties": { "Roles": [{ "Ref": "PhaEcsInstanceRole" }] }
+    },
+    "PhaSgHost": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "ECS container instances: no inbound, HTTPS out for the ECS and SSM agents",
+        "VpcId": { "Fn::ImportValue": { "Fn::Sub": "${NetworkStackName}-VpcId" } },
+        "SecurityGroupEgress": [{ "IpProtocol": "tcp", "FromPort": 443, "ToPort": 443, "CidrIp": "0.0.0.0/0" }],
+        "Tags": [{ "Key": "Name", "Value": { "Fn::Sub": "${ProjectName}-sg-host" } }]
+      }
+    },
+    "PhaEcsLaunchTemplate": {
+      "Type": "AWS::EC2::LaunchTemplate",
+      "Properties": {
+        "LaunchTemplateData": {
+          "ImageId": { "Ref": "EcsAmiId" },
+          "InstanceType": { "Ref": "InstanceType" },
+          "IamInstanceProfile": { "Arn": { "Fn::GetAtt": ["PhaEcsInstanceProfile", "Arn"] } },
+          "SecurityGroupIds": [{ "Ref": "PhaSgHost" }],
+          "MetadataOptions": { "HttpTokens": "required" },
+          "TagSpecifications": [{
+            "ResourceType": "instance",
+            "Tags": [{ "Key": "Name", "Value": { "Fn::Sub": "${ProjectName}-ecs-host" } }]
+          }],
+          "UserData": { "Fn::Base64": { "Fn::Sub": "#!/bin/bash\necho ECS_CLUSTER=${PhaEcsCluster} >> /etc/ecs/ecs.config\necho ECS_AWSVPC_BLOCK_IMDS=true >> /etc/ecs/ecs.config\n" } }
+        }
+      }
+    }
+  }
+}
