@@ -32,6 +32,28 @@
       "Type": "AWS::ECS::Cluster",
       "Properties": { "ClusterName": { "Ref": "ClusterName" } }
     },
+    "PhaAutoScalingGroup": {
+      "Type": "AWS::AutoScaling::AutoScalingGroup",
+      "Properties": {
+        "LaunchTemplate": {
+          "LaunchTemplateId": { "Ref": "PhaEcsLaunchTemplate" },
+          "Version": { "Fn::GetAtt": [ "PhaEcsLaunchTemplate", "LatestVersionNumber" ] }
+        },
+        "MaxSize": "3",
+        "MinSize": "2",
+        "VPCZoneIdentifier": { "Fn::Split" : [ ",", { "Fn::ImportValue": { "Fn::Sub": "${NetworkStackName}-AppSubnetIds" } } ]},
+        "MetricsCollection": [{
+          "Granularity": "1Minute",
+          "Metrics": [
+            "GroupMinSize",
+            "GroupMaxSize"
+          ]
+        }],
+        "Tags": [
+          { "Key": "Name", "Value": { "Fn::Sub": "${ProjectName}-asg" }, "PropagateAtLaunch": "true" }
+        ]
+      }
+    },
     "PhaEcsInstanceRole": {
       "Type": "AWS::IAM::Role",
       "Properties": {
