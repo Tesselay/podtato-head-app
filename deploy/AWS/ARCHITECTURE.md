@@ -1,5 +1,14 @@
 ## Decisions
 
+### Deployment CI/CD
+
+**Choice:** Make
+**Alternatives:** Shell Scripts
+
+For a reliable, idempotent deployment and teardown workflow I've decided go with Make. For one is Make an old and battle-tested technology that, in my experience, runs really stable, it is also installed on most Linux distributions by default. It is not generally intended for applications that do not manipulate files and while this project does not really change files, there are ways to get around this (e.g. PHONY targets) so that I can profit from what Make does good - for example its usage simplicity and versatility for recipe definition with a myriad of other features.
+
+Shell scripts are an alternative but for a local deployment CI/CD I would essentially re-implement Make.
+
 ### Private Egress
 
 **Choice:** Public NAT Gateways
@@ -89,3 +98,17 @@ AWS offers tags, and of course names, to define and group resources. Thus:
 
 **Naming** - Every resource name is prefixed with `pha-`, short for "podtato-head-app".
 **Tags** - Every resource is tagged with `Project: practice-pha`.
+
+## Learnings
+
+### CloudFormation JSON vs. YAML
+
+Next time I use CloudFormation, I will use JSON instead of YAML as writing JSON by hand is awful DX.
+
+### CloudFormation vs. Terraform
+
+I can't really make a technical relevant statement for comparison since I lack experience with Terraform. But for the next AWS/Cloud project I will use Terraform, yet alone to learn a new technology.
+
+## Other Notes
+
+- Tags are added as a command parameter to the CLI invocation instead of adding the project tag to every CloudFormation resource manually.
