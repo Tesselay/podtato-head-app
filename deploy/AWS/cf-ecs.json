@@ -30,31 +30,70 @@
   "Resources": {
     "PhaEcsCluster": {
       "Type": "AWS::ECS::Cluster",
-      "Properties": { "ClusterName": { "Ref": "ClusterName" } }
+      "Properties": {
+        "ClusterName": { "Ref": "ClusterName" },
+        "ClusterSettings": [{
+          "Name": "containerInsights",
+          "Value": "enabled"
+        }]
+      }
     },
     "PhaAutoScalingGroup": {
       "Type": "AWS::AutoScaling::AutoScalingGroup",
       "Properties": {
         "LaunchTemplate": {
-          "LaunchTemplateId": { "Ref": "PhaEcsLaunchTemplate" },
-          "Version": { "Fn::GetAtt": [ "PhaEcsLaunchTemplate", "LatestVersionNumber" ] }
+          "LaunchTemplateId": { "Ref": "PhaEcsContainerLaunchTemplate" },
+          "Version": { "Fn::GetAtt": [ "PhaEcsContainerLaunchTemplate", "LatestVersionNumber" ] }
         },
-        "MaxSize": "3",
-        "MinSize": "2",
+        "MaxSize": "10",
+        "MinSize": "1",
         "VPCZoneIdentifier": { "Fn::Split" : [ ",", { "Fn::ImportValue": { "Fn::Sub": "${NetworkStackName}-AppSubnetIds" } } ]},
-        "MetricsCollection": [{
-          "Granularity": "1Minute",
-          "Metrics": [
-            "GroupMinSize",
-            "GroupMaxSize"
-          ]
-        }],
+        "MetricsCollection": [{ "Granularity": "1Minute" }],
         "Tags": [
-          { "Key": "Name", "Value": { "Fn::Sub": "${ProjectName}-asg" }, "PropagateAtLaunch": "true" }
+          { "Key": "Name", "Value": { "Fn::Sub": "${ProjectName}-asg" }, "PropagateAtLaunch": "false" }
         ]
       }
     },
-    "PhaEcsInstanceRole": {
+    "PhaEcsCapacityProvider": {
+      "Type": "AWS::ECS::CapacityProvider",
+      "Properties": {
+        "AutoScalingGroupProvider": {
+          "AutoScalingGroupArn": { "Ref": "PhaAutoScalingGroup" },
+          "ManagedDraining": "ENABLED",
+          "ManagedTerminationProtection": "DISABLED",
+          "ManagedScaling": {
+            "MaximumScalingStepSize": 1,
+            "MinimumScalingStepSize": 1,
+            "Status": "ENABLED",
+            "TargetCapacity": 100
+          }
+        },
+        "Tags": [{ "Key": "Name", "Value": { "Fn::Sub": "${ProjectName}-ecs-capacity-provider" }}]
+      }
+    },
+    "PhaEcsCapacityProviderAssociation": {
+      "Type": "AWS::ECS::ClusterCapacityProviderAssociations",
+      "Properties": {
+        "CapacityProviders": [
+          {
+            "Ref": "PhaEcsCapacityProvider"
+          }
+        ],
+        "Cluster": {
+          "Ref": "PhaEcsCluster"
+        },
+        "DefaultCapacityProviderStrategy": [
+          {
+            "Base": 0,
+            "CapacityProvider": {
+              "Ref": "PhaEcsCapacityProvider"
+            },
+            "Weight": 1
+          }
+        ]
+      }
+    },
+    "PhaEcsEc2InstanceRole": {
       "Type": "AWS::IAM::Role",
       "Properties": {
         "AssumeRolePolicyDocument": {
@@ -67,9 +106,45 @@
         ]
       }
     },
-    "PhaEcsInstanceProfile": {
+    "ECSTaskExecutionRole": {
+        "Type": "AWS::IAM::Role",
+        "Properties": {
+            "AssumeRolePolicyDocument": {
+                "Statement": [
+                    {
+                        "Effect": "Allow",
+                        "Principal": {
+                            "Service": [
+                                "ecs-tasks.amazonaws.com"
+                            ]
+                        },
+                        "Action": [
+                            "sts:AssumeRole"
+                        ],
+                        "Condition": {
+                            "ArnLike": {
+                                "aws:SourceArn": {
+                                    "Fn::Sub": "arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:*"
+                                }
+                            },
+                            "StringEquals": {
+                                "aws:SourceAccount": {
+                                      "Fn::Sub": "${AWS::AccountId}"
+                                  }
+                            }
+                        }
+                    }
+                ]
+            },
+            "Path": "/",
+            "ManagedPolicyArns": [
+                "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+            ]
+        }
+    },
+    "PhaEcsEc2InstanceProfile": {
       "Type": "AWS::IAM::InstanceProfile",
-      "Properties": { "Roles": [{ "Ref": "PhaEcsInstanceRole" }] }
+      "Properties": { "Roles": [{ "Ref": "PhaEcsEc2InstanceRole" }] }
     },
     "PhaSgHost": {
       "Type": "AWS::EC2::SecurityGroup",
@@ -80,13 +155,13 @@
         "Tags": [{ "Key": "Name", "Value": { "Fn::Sub": "${ProjectName}-sg-host" } }]
       }
     },
-    "PhaEcsLaunchTemplate": {
+    "PhaEcsContainerLaunchTemplate": {
       "Type": "AWS::EC2::LaunchTemplate",
       "Properties": {
         "LaunchTemplateData": {
           "ImageId": { "Ref": "EcsAmiId" },
           "InstanceType": { "Ref": "InstanceType" },
-          "IamInstanceProfile": { "Arn": { "Fn::GetAtt": ["PhaEcsInstanceProfile", "Arn"] } },
+          "IamInstanceProfile": { "Arn": { "Fn::GetAtt": ["PhaEcsEc2InstanceProfile", "Arn"] } },
           "SecurityGroupIds": [{ "Ref": "PhaSgHost" }],
           "MetadataOptions": { "HttpTokens": "required" },
           "TagSpecifications": [{
