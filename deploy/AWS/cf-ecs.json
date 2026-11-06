@@ -25,6 +25,10 @@
     "NetworkStackName": {
       "Type": "String",
       "Description": "Name of the stack deployed from cf-vpc.json"
+    },
+    "SecretsStackName": {
+      "Type": "String",
+      "Description": "Name of the stack deployed from cf-secrets.json"
     }
   },
   "Resources": {
@@ -42,8 +46,8 @@
       "Type": "AWS::AutoScaling::AutoScalingGroup",
       "Properties": {
         "LaunchTemplate": {
-          "LaunchTemplateId": { "Ref": "PhaEcsContainerLaunchTemplate" },
-          "Version": { "Fn::GetAtt": [ "PhaEcsContainerLaunchTemplate", "LatestVersionNumber" ] }
+          "LaunchTemplateId": { "Ref": "PhaEcsHostLaunchTemplate" },
+          "Version": { "Fn::GetAtt": [ "PhaEcsHostLaunchTemplate", "LatestVersionNumber" ] }
         },
         "MaxSize": "10",
         "MinSize": "1",
@@ -138,7 +142,8 @@
             },
             "Path": "/",
             "ManagedPolicyArns": [
-                "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+                "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy",
+                { "Fn::ImportValue": { "Fn::Sub": "${SecretsStackName}-AppEnvSecretReadPolicy" } }
             ]
         }
     },
@@ -155,7 +160,7 @@
         "Tags": [{ "Key": "Name", "Value": { "Fn::Sub": "${ProjectName}-sg-host" } }]
       }
     },
-    "PhaEcsContainerLaunchTemplate": {
+    "PhaEcsHostLaunchTemplate": {
       "Type": "AWS::EC2::LaunchTemplate",
       "Properties": {
         "LaunchTemplateData": {

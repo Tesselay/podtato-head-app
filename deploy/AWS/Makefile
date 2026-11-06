@@ -94,26 +94,22 @@ deploy-ecs:
 		--stack-name $(ECS_STACK) \
 		--capabilities CAPABILITY_IAM \
 		--no-fail-on-empty-changeset \
-		--parameter-overrides ProjectName=$(PROJECT) NetworkStackName=$(NETWORK_STACK) \
+		--parameter-overrides ProjectName=$(PROJECT) NetworkStackName=$(NETWORK_STACK) SecretsStackName=$(SECRETS_STACK) \
 		--tags project=$(PROJECT)
 
 
 # ----- Teardown -----------------------------------------------------------------------
 teardown-secrets:
 	AWS_PROFILE=$(AWS_PROFILE_IAM) aws cloudformation delete-stack \
-		--stack-name $(SECRETS_STACK) \
-		--capabilities CAPABILITY_IAM \
+		--stack-name $(SECRETS_STACK)
 	AWS_PROFILE=$(AWS_PROFILE_IAM) aws cloudformation wait stack-delete-complete \
 		--stack-name $(SECRETS_STACK) \
-		--capabilities CAPABILITY_IAM \
 
 teardown-registry:
 	AWS_PROFILE=$(AWS_PROFILE_IAM) aws cloudformation delete-stack \
-		--stack-name $(REGISTRY_STACK) \
-		--capabilities CAPABILITY_IAM \
+		--stack-name $(REGISTRY_STACK)
 	AWS_PROFILE=$(AWS_PROFILE_IAM) aws cloudformation wait stack-delete-complete \
-		--stack-name $(REGISTRY_STACK) \
-		--capabilities CAPABILITY_IAM \
+		--stack-name $(REGISTRY_STACK)
 
 teardown-network:
 	AWS_PROFILE=$(AWS_PROFILE_IAM) aws cloudformation delete-stack \
