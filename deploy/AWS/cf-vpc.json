@@ -146,8 +146,8 @@
         }],
         "SecurityGroupEgress": [{
           "IpProtocol": "tcp",
-          "FromPort": 8080,
-          "ToPort": 8080,
+          "FromPort": { "Ref": "AppPort" },
+          "ToPort": { "Ref": "AppPort" },
           "DestinationSecurityGroupId": { "Ref": "PhaSgTask" },
           "Description": "App traffic and health checks to the tasks"
         }],
@@ -175,7 +175,7 @@
       "Properties": {
         "GroupId": { "Fn::GetAtt": ["PhaSgTask", "GroupId"] },
         "SourceSecurityGroupId": { "Fn::GetAtt": ["PhaSgElb", "GroupId"] },
-        "IpProtocol": "tcp", "FromPort": 8080, "ToPort": 8080,
+        "IpProtocol": "tcp", "FromPort": { "Ref": "AppPort" }, "ToPort": { "Ref": "AppPort" },
         "Description": "App traffic and health checks from the ALB"
       }
     },
@@ -274,6 +274,39 @@
         ],
         "Tags": [{ "Key": "Name", "Value": { "Fn::Sub": "${ProjectName}-alb" } }]
       }
+    },
+    "PhaElbTargetGroup": {
+      "Type": "AWS::ElasticLoadBalancingV2::TargetGroup",
+      "Properties": {
+        "HealthCheckPath": "/healthz",
+        "HealthCheckIntervalSeconds": 10,
+        "HealthyThresholdCount": 2,
+        "Port": { "Ref": "AppPort" },
+        "Protocol": "HTTP",
+        "TargetType": "ip",
+        "HealthCheckProtocol": "HTTP",
+        "VpcId": { "Ref": "PhaVpc" },
+        "TargetGroupAttributes": [{
+          "Key": "deregistration_delay.timeout_seconds",
+          "Value": "30"
+        }],
+        "Tags": [{ "Key": "Name", "Value": { "Fn::Sub": "${ProjectName}-alb-tg" } }]
+      }
+    },
+    "PhaElbListener": {
+      "Type": "AWS::ElasticLoadBalancingV2::Listener",
+      "Properties": {
+        "DefaultActions": [
+          {
+            "Type": "forward",
+            "TargetGroupArn" : { "Ref": "PhaElbTargetGroup" }
+          }
+        ],
+        "LoadBalancerArn": { "Ref": "PhaElb" },
+        "Port": 80,
+        "Protocol": "HTTP",
+        "Tags": [{ "Key": "Name", "Value": { "Fn::Sub": "${ProjectName}-alb-listener" } }]
+      }
     }
   },
   "Outputs": {
@@ -291,13 +324,13 @@
       "Value": { "Fn::GetAtt": ["PhaSgTask", "GroupId"] },
       "Export": { "Name": { "Fn::Sub": "${AWS::StackName}-TaskSecurityGroupId" } }
     },
-    "LoadBalancerArn": {
-      "Description": "For the listener in the service stack.",
-      "Value": { "Ref": "PhaElb" },
-      "Export": { "Name": { "Fn::Sub": "${AWS::StackName}-LoadBalancerArn" } }
+    "ElbTargetGroup": {
+      "Description": "For the ECS service.",
+      "Value": { "Ref" : "PhaElbTargetGroup" },
+      "Export": { "Name": { "Fn::Sub": "${AWS::StackName}-TargetGroup" } }
     },
     "LoadBalancerDnsName": {
-      "Description": "Open http://<this name> in a browser once a listener exists.",
+      "Description": "Open http://<this name> in a browser once a domain exists.",
       "Value": { "Fn::GetAtt": ["PhaElb", "DNSName"] },
       "Export": { "Name": { "Fn::Sub": "${AWS::StackName}-LoadBalancerDnsName" } }
     },
