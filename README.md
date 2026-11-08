@@ -3,14 +3,16 @@ Podtato-head is a cloud-native application built to colorfully demonstrate deliv
 
 ## Requirements
 
-To run the application with Docker, the application entry at [cmd/main.go](cmd/main.go) requires 4 variables which can be set either by providing the var names when invoking the file or by setting the following env variables:
+To run the application with Docker, the application entry at [cmd/main.go](cmd/main.go) requires 4 variables. One of these is a secret and should be defined either directly in the deployment provider or in the env file `.dev.env` (at project root). 
+
+The other 3 variables need to be set within the deployment method, in AWS this is the network CloudFormation template `cf-vpc.json` for `PODTATO_PORT` and the ecs template `cf-ecs.json` for the rmeaining two.
 
 - PODTATO_COMPONENT (Public)
 - PODTATO_PORT (Public)
 - PODTATO_STARTUP_DELAY (Public)
 - PODTATO_SECRET_MESSAGE (Private)
 
-The go-side names, default values and some usage info are detailed in the aforementioned file.
+The go-side names, default values and some usage info are detailed in the go file.
 
 Packages required:
 

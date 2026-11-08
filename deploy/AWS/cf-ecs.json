@@ -22,6 +22,26 @@
       "Default": "t3.micro",
       "Description": "Each awsvpc task takes one network interface on its host: t3.micro (2 interfaces) fits one task, t3.small (3) fits two."
     },
+    "AppComponents": {
+      "Type": "String",
+      "Description": "App specific env var for the components to be rendered.",
+      "Default": "all",
+      "AllowedValues": ["all", "leftArm", "rightArm", "leftLeg", "rightLeg"]
+    },
+    "AppStartupDelay": {
+      "Type": "String",
+      "Description": "App specific env var to delay runtime startup.",
+      "Default": "0s"
+    },
+    "RepositoryUri": {
+      "Type": "String",
+      "Description": "URI of the project repository, exported from cf-ecr-repository.json"
+    },
+    "ImageDigest": {
+      "Type": "String",
+      "AllowedPattern": "^sha256:[a-f0-9]{64}$",
+      "Description": "Image digest as sourced from invocation."
+    },
     "NetworkStackName": {
       "Type": "String",
       "Description": "Name of the stack deployed from cf-vpc.json"
@@ -42,27 +62,11 @@
         }]
       }
     },
-    "PhaAutoScalingGroup": {
-      "Type": "AWS::AutoScaling::AutoScalingGroup",
-      "Properties": {
-        "LaunchTemplate": {
-          "LaunchTemplateId": { "Ref": "PhaEcsHostLaunchTemplate" },
-          "Version": { "Fn::GetAtt": [ "PhaEcsHostLaunchTemplate", "LatestVersionNumber" ] }
-        },
-        "MaxSize": "10",
-        "MinSize": "1",
-        "VPCZoneIdentifier": { "Fn::Split" : [ ",", { "Fn::ImportValue": { "Fn::Sub": "${NetworkStackName}-AppSubnetIds" } } ]},
-        "MetricsCollection": [{ "Granularity": "1Minute" }],
-        "Tags": [
-          { "Key": "Name", "Value": { "Fn::Sub": "${ProjectName}-asg" }, "PropagateAtLaunch": "false" }
-        ]
-      }
-    },
     "PhaEcsCapacityProvider": {
       "Type": "AWS::ECS::CapacityProvider",
       "Properties": {
         "AutoScalingGroupProvider": {
-          "AutoScalingGroupArn": { "Ref": "PhaAutoScalingGroup" },
+          "AutoScalingGroupArn": { "Ref": "PhaEc2AutoScalingGroup" },
           "ManagedDraining": "ENABLED",
           "ManagedTerminationProtection": "DISABLED",
           "ManagedScaling": {
@@ -97,7 +101,82 @@
         ]
       }
     },
-    "PhaEcsEc2InstanceRole": {
+    "PhaEcsTaskExecutionRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": [
+                    "ecs-tasks.amazonaws.com"
+                ]
+              },
+              "Action": [
+                "sts:AssumeRole"
+              ],
+              "Condition": {
+                "ArnLike": {
+                  "aws:SourceArn": {
+                    "Fn::Sub": "arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:*"
+                  }
+                },
+                "StringEquals": {
+                  "aws:SourceAccount": {
+                    "Fn::Sub": "${AWS::AccountId}"
+                  }
+                }
+              }
+            }
+          ]
+          },
+          "Path": "/",
+          "ManagedPolicyArns": [
+              "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy",
+              { "Fn::ImportValue": { "Fn::Sub": "${SecretsStackName}-AppEnvSecretReadPolicy" } }
+          ]
+      }
+    },
+    "PhaEcsTaskDefinition": {
+      "Type": "AWS::ECS::TaskDefinition",
+      "Properties": {
+        "ExecutionRoleArn": { "Fn::GetAtt": ["PhaEcsTaskExecutionRole", "Arn"] },
+        "NetworkMode": "awsvpc",
+        "Cpu": "256",
+        "Memory": "512",
+        "ContainerDefinitions": [{
+          "Name": { "Ref": "ProjectName" },
+          "Image": { "Fn::Sub": "${RepositoryUri}@${ImageDigest}" },
+          "PortMappings": [{
+            "ContainerPort": { "Fn::ImportValue": { "Fn::Sub": "${NetworkStackName}-AppPort" } },
+            "Protocol": "tcp"
+          }],
+          "Environment": [
+            { "Name": "PORT", "Value": { "Fn::ImportValue": { "Fn::Sub": "${NetworkStackName}-AppPort" } } },
+            { "Name": "PODTATO_COMPONENT", "Value": { "Ref": "AppComponents" } },
+            { "Name": "PODTATO_STARTUP_DELAY", "Value": { "Ref": "AppStartupDelay" } }
+          ],
+          "Secrets": [{
+            "Name": "PODTATO_SECRET_MESSAGE", "ValueFrom": { "Fn::Sub": ["${ARN}:PODTATO_SECRET_MESSAGE::", { "ARN": { "Fn::ImportValue": { "Fn::Sub": "${SecretsStackName}-SecretsArn" } } } ] }
+          }],
+          "LogConfiguration": {
+            "LogDriver": "awslogs",
+            "Options": {
+              "awslogs-group": { "Ref": "PhaEcsLogGroup" },
+              "awslogs-region": { "Ref": "AWS::Region" },
+              "awslogs-stream-prefix": "app"
+            }
+          }
+        }]
+      }
+    },
+    "PhaEcsLogGroup": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": { "RetentionInDays": 7 }
+    },
+    "PhaEc2InstanceRole": {
       "Type": "AWS::IAM::Role",
       "Properties": {
         "AssumeRolePolicyDocument": {
@@ -110,64 +189,34 @@
         ]
       }
     },
-    "ECSTaskExecutionRole": {
-        "Type": "AWS::IAM::Role",
-        "Properties": {
-            "AssumeRolePolicyDocument": {
-                "Statement": [
-                    {
-                        "Effect": "Allow",
-                        "Principal": {
-                            "Service": [
-                                "ecs-tasks.amazonaws.com"
-                            ]
-                        },
-                        "Action": [
-                            "sts:AssumeRole"
-                        ],
-                        "Condition": {
-                            "ArnLike": {
-                                "aws:SourceArn": {
-                                    "Fn::Sub": "arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:*"
-                                }
-                            },
-                            "StringEquals": {
-                                "aws:SourceAccount": {
-                                      "Fn::Sub": "${AWS::AccountId}"
-                                  }
-                            }
-                        }
-                    }
-                ]
-            },
-            "Path": "/",
-            "ManagedPolicyArns": [
-                "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy",
-                { "Fn::ImportValue": { "Fn::Sub": "${SecretsStackName}-AppEnvSecretReadPolicy" } }
-            ]
-        }
-    },
-    "PhaEcsEc2InstanceProfile": {
+    "PhaEc2InstanceProfile": {
       "Type": "AWS::IAM::InstanceProfile",
-      "Properties": { "Roles": [{ "Ref": "PhaEcsEc2InstanceRole" }] }
+      "Properties": { "Roles": [{ "Ref": "PhaEc2InstanceRole" }] }
     },
-    "PhaSgHost": {
-      "Type": "AWS::EC2::SecurityGroup",
+    "PhaEc2AutoScalingGroup": {
+      "Type": "AWS::AutoScaling::AutoScalingGroup",
       "Properties": {
-        "GroupDescription": "ECS container instances: no inbound, HTTPS out for the ECS and SSM agents",
-        "VpcId": { "Fn::ImportValue": { "Fn::Sub": "${NetworkStackName}-VpcId" } },
-        "SecurityGroupEgress": [{ "IpProtocol": "tcp", "FromPort": 443, "ToPort": 443, "CidrIp": "0.0.0.0/0" }],
-        "Tags": [{ "Key": "Name", "Value": { "Fn::Sub": "${ProjectName}-sg-host" } }]
+        "LaunchTemplate": {
+          "LaunchTemplateId": { "Ref": "PhaEc2HostLaunchTemplate" },
+          "Version": { "Fn::GetAtt": [ "PhaEc2HostLaunchTemplate", "LatestVersionNumber" ] }
+        },
+        "MaxSize": "10",
+        "MinSize": "1",
+        "VPCZoneIdentifier": { "Fn::Split" : [ ",", { "Fn::ImportValue": { "Fn::Sub": "${NetworkStackName}-AppSubnetIds" } } ]},
+        "MetricsCollection": [{ "Granularity": "1Minute" }],
+        "Tags": [
+          { "Key": "Name", "Value": { "Fn::Sub": "${ProjectName}-asg" }, "PropagateAtLaunch": "false" }
+        ]
       }
     },
-    "PhaEcsHostLaunchTemplate": {
+    "PhaEc2HostLaunchTemplate": {
       "Type": "AWS::EC2::LaunchTemplate",
       "Properties": {
         "LaunchTemplateData": {
           "ImageId": { "Ref": "EcsAmiId" },
           "InstanceType": { "Ref": "InstanceType" },
-          "IamInstanceProfile": { "Arn": { "Fn::GetAtt": ["PhaEcsEc2InstanceProfile", "Arn"] } },
-          "SecurityGroupIds": [{ "Ref": "PhaSgHost" }],
+          "IamInstanceProfile": { "Arn": { "Fn::GetAtt": ["PhaEc2InstanceProfile", "Arn"] } },
+          "SecurityGroupIds": [{ "Ref": "PhaEc2HostSg" }],
           "MetadataOptions": { "HttpTokens": "required" },
           "TagSpecifications": [{
             "ResourceType": "instance",
@@ -175,6 +224,15 @@
           }],
           "UserData": { "Fn::Base64": { "Fn::Sub": "#!/bin/bash\necho ECS_CLUSTER=${PhaEcsCluster} >> /etc/ecs/ecs.config\necho ECS_AWSVPC_BLOCK_IMDS=true >> /etc/ecs/ecs.config\n" } }
         }
+      }
+    },
+    "PhaEc2HostSg": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "ECS container instances: no inbound, HTTPS out for the ECS and SSM agents",
+        "VpcId": { "Fn::ImportValue": { "Fn::Sub": "${NetworkStackName}-VpcId" } },
+        "SecurityGroupEgress": [{ "IpProtocol": "tcp", "FromPort": 443, "ToPort": 443, "CidrIp": "0.0.0.0/0" }],
+        "Tags": [{ "Key": "Name", "Value": { "Fn::Sub": "${ProjectName}-sg-host" } }]
       }
     }
   }

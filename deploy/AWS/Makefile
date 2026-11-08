@@ -38,6 +38,10 @@ COSIGN_KEY          := awskms:///alias/$(PROJECT)-cosign
 
 REPOSITORY          := prod/$(APP)
 REPOSITORY_URI      := $(RegistryUri)/$(REPOSITORY)
+IMAGE_DIGEST        := $(shell aws ecr describe-images \
+                            --repository-name $(REPOSITORY) \
+                            --image-ids imageTag=$(IMAGE_TAG) \
+                            --query "imageDetails[0].imageDigest" --output text)
 
 SHELL               := /bin/bash
 .SHELLFLAGS         := -eu -o pipefail -c
@@ -94,7 +98,7 @@ deploy-ecs:
 		--stack-name $(ECS_STACK) \
 		--capabilities CAPABILITY_IAM \
 		--no-fail-on-empty-changeset \
-		--parameter-overrides ProjectName=$(PROJECT) NetworkStackName=$(NETWORK_STACK) SecretsStackName=$(SECRETS_STACK) \
+		--parameter-overrides ProjectName=$(PROJECT) NetworkStackName=$(NETWORK_STACK) SecretsStackName=$(SECRETS_STACK) RepositoryUri=$(REPOSITORY_URI) ImageDigest=$(IMAGE_DIGEST) \
 		--tags project=$(PROJECT)
 
 

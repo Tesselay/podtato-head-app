@@ -35,6 +35,11 @@
     "PrivateSubnet2Cidr": {
       "Type": "String",
       "Default": "10.0.11.0/24"
+    },
+    "AppPort": {
+      "Type": "Number",
+      "Default": 8080,
+      "Description": "Port the app will listen on - this is the source value every other service/component reads from."
     }
   },
   "Resources": {
@@ -295,6 +300,10 @@
       "Description": "Open http://<this name> in a browser once a listener exists.",
       "Value": { "Fn::GetAtt": ["PhaElb", "DNSName"] },
       "Export": { "Name": { "Fn::Sub": "${AWS::StackName}-LoadBalancerDnsName" } }
+    },
+    "AppPort": {
+      "Value": { "Ref": "AppPort" },
+      "Export": { "Name": { "Fn::Sub": "${AWS::StackName}-AppPort" } }
     }
   }
 }
