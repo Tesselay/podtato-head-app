@@ -1,7 +1,7 @@
 # practice-pha infrastructure: a thin wrapper around two CloudFormation stacks and
-# cosign. Requires a SSO authenticated AWS profile (`aws sso`) as cosign works better
-# with it than the newer `aws login`. Most is configured here but requires some env
-# variables that are provided automatically when invoking via the root Makefile.
+# cosign. Requies an AWS login with a configured region. Most is configured here but
+# requires some env variables that are provided automatically when invoking via the
+# root Makefile.
 #
 #   make deploy-registry
 #   make deploy-secrets
