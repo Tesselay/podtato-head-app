@@ -15,8 +15,10 @@
 
 # ----- Configuration ------------------------------------------------------------------
 AWS_CLI_PATH        := .aws/
-AWS_PROFILE         := practice-pha
+AWS_PROFILE         := practice-pha-admin
 AWS_PROFILE_IAM     := practice-pha-admin
+
+export AWS_PROFILE
 
 REGISTRY_CF         := cf-ecr-repository.json
 REGISTRY_STACK      := $(PROJECT)-registry
@@ -38,16 +40,27 @@ COSIGN_KEY          := awskms:///alias/$(PROJECT)-cosign
 
 REPOSITORY          := prod/$(APP)
 REPOSITORY_URI      := $(RegistryUri)/$(REPOSITORY)
-IMAGE_DIGEST        := $(shell aws ecr describe-images \
+
+IMAGE_DIGEST        ?= $(shell aws ecr describe-images \
                             --repository-name $(REPOSITORY) \
                             --image-ids imageTag=$(IMAGE_TAG) \
                             --query "imageDetails[0].imageDigest" --output text)
+TARGETGROUP         ?= $(shell aws cloudformation describe-stacks \
+                            --stack-name $(NETWORK_STACK) \
+                            --query "Stacks[0].Outputs[?OutputKey=='ElbTargetGroup'].OutputValue" \
+                            --output text)
+TASKS               ?= $(shell aws ecs list-tasks --cluster pha-cluster \
+                            --query 'taskArns[]' --output text)
+ELB                 ?= $(shell aws cloudformation describe-stacks \
+                            --stack-name $(NETWORK_STACK) \
+                            --query "Stacks[0].Outputs[?OutputKey=='LoadBalancerDnsName'].OutputValue" \
+                            --output text)
 
 SHELL               := /bin/bash
 .SHELLFLAGS         := -eu -o pipefail -c
 .DELETE_ON_ERROR:
 
-export AWS_PROFILE
+
 
 
 # ----- Phony Targets ------------------------------------------------------------------
@@ -57,6 +70,7 @@ export AWS_PROFILE
 		sign verify \
 
 init: deploy-registry deploy-secrets secrets deploy-network deploy-ecs $(META_ENV_PATH)
+test: smoke-test-target-group smoke-test-cluster smoke-test-elb
 teardown-stack: teardown-ecs teardown-network
 teardown-stack-all: teardown-stack teardown-registry teardown-secrets
 
@@ -151,6 +165,18 @@ read:
 login:
 	aws ecr get-login-password \
 		| docker login --username AWS --password-stdin $(RegistryUri)
+
+smoke-test-target-group:
+	aws elbv2 describe-target-health --target-group-arn "$(TARGETGROUP)" \
+        --query 'TargetHealthDescriptions[].[Target.Id,TargetHealth.State]' --output table
+
+smoke-test-cluster:
+	aws ecs describe-tasks --cluster pha-cluster \
+        --tasks $(TASKS) \
+        --query 'tasks[].[availabilityZone,lastStatus]' --output table
+
+smoke-test-elb:
+	curl -o /dev/null -s -w "HTTP Return Code: %{http_code}\n" http://$(ELB)/
 
 
 # ----- Signing ------------------------------------------------------------------------

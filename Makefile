@@ -45,22 +45,24 @@ SHELL               := /bin/bash
 # ----- Phony Targets ------------------------------------------------------------------
 .PHONY: init login secrets verify teardown-stack teardown-stack-all \
 		push push-image sign \
+		test smoke-test \
 		local build-local run-local teardown-local \
-		test build-test run-test smoke-test teardown-test
+		local-test build-test run-test local-smoke-test teardown-test
 
 push: push-image sign
+test:
 local: build-local run-local teardown-local
-test: build-test run-test smoke-test teardown-test
+local-test: build-test run-test smoke-test teardown-test
 
 help:
 	@sed -n '1,/^$$/s/^# \{0,1\}//p' $(firstword $(MAKEFILE_LIST))
 
 
 # ----- Recipes ------------------------------------------------------------------------
-init login secrets sign verify $(META_ENV_PATH) teardown-stack teardown-stack-all:
+init login secrets sign verify $(META_ENV_PATH) test teardown-stack teardown-stack-all:
 	$(DEPLOY) $@
 
-push-image: login build
+push-image: login build-local
 	docker tag $(APP):$(IMAGE_TAG) $(REPOSITORY_URI):$(IMAGE_TAG)
 	docker push $(REPOSITORY_URI):$(IMAGE_TAG)
 
