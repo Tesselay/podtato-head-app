@@ -109,6 +109,12 @@ Next time I use CloudFormation, I will use JSON instead of YAML as writing JSON 
 
 I can't really make a technical relevant statement for comparison since I lack experience with Terraform. But for the next AWS/Cloud project I will use Terraform, yet alone to learn a new technology.
 
+### Nested Makefiles
+
+This approach allows me to keep the infrastructure domain exchangeable which is, while being out of scope for now, allows me to return to this project and experiment with new infrastructure stacks.
+
+Unfortunately there is no easy way to enforce the structure of the deployment commands with Make and since I defined a few key variables (like the project name) in the root Makefile and pass it along, I have to route and deployment method through the root Makefile, making experimentation and running specific infrastructure methods ad-hoc more difficult. Next time I either drop the nesting, define key variables somewhere else and them in per Makefile or try another deployment IaC approach that supports modularity more readily.
+
 ## Other Notes
 
 - Tags are added as a command parameter to the CLI invocation instead of adding the project tag to every CloudFormation resource manually.
