@@ -45,12 +45,12 @@ SHELL               := /bin/bash
 # ----- Phony Targets ------------------------------------------------------------------
 .PHONY: init login secrets verify teardown-stack teardown-stack-all \
 		push push-image sign \
-		test smoke-test \
+		test smoke-test availability-test \
 		local build-local run-local teardown-local \
 		local-test build-test run-test local-smoke-test teardown-test
 
 push: push-image sign
-test:
+test: smoke-test availability-test
 local: build-local run-local teardown-local
 local-test: build-test run-test smoke-test teardown-test
 
@@ -59,7 +59,7 @@ help:
 
 
 # ----- Recipes ------------------------------------------------------------------------
-init login secrets sign verify $(META_ENV_PATH) test teardown-stack teardown-stack-all:
+init login secrets sign verify $(META_ENV_PATH) test teardown-stack teardown-stack-all smoke-test availability-test:
 	$(DEPLOY) $@
 
 push-image: login build-local

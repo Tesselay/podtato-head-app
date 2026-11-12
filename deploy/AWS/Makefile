@@ -50,7 +50,7 @@ TARGETGROUP         ?= $(shell aws cloudformation describe-stacks \
                             --query "Stacks[0].Outputs[?OutputKey=='ElbTargetGroup'].OutputValue" \
                             --output text)
 TASKS               ?= $(shell aws ecs list-tasks --cluster pha-cluster \
-                            --query 'taskArns[]' --output text)
+                            --query 'taskArns[]' --output text --no-cli-pager)
 ELB                 ?= $(shell aws cloudformation describe-stacks \
                             --stack-name $(NETWORK_STACK) \
                             --query "Stacks[0].Outputs[?OutputKey=='LoadBalancerDnsName'].OutputValue" \
@@ -64,18 +64,45 @@ SHELL               := /bin/bash
 
 
 # ----- Phony Targets ------------------------------------------------------------------
-.PHONY: help init teardown-stack teardown-stack-all \
-		deploy-secrets deploy-registry secrets \
-		read login \
-		sign verify \
+.PHONY: help init read login sign verify \
+		deploy-secrets deploy-registry deploy-network deploy-ecs secrets \
+		test smoke-test smoke-test-target-group smoke-test-cluster smoke-test-elb availability-test \
+		teardown-stack teardown-stack-all teardown-ecs teardown-registy teardown-network teardown-secrets \
 
 init: deploy-registry deploy-secrets secrets deploy-network deploy-ecs $(META_ENV_PATH)
-test: smoke-test-target-group smoke-test-cluster smoke-test-elb
+test: smoke-test-target-group smoke-test-cluster smoke-test-elb availability-test
+smoke-test: smoke-test-target-group smoke-test-cluster smoke-test-elb
 teardown-stack: teardown-ecs teardown-network
 teardown-stack-all: teardown-stack teardown-registry teardown-secrets
 
 help:
 	@sed -n '1,/^$$/s/^# \{0,1\}//p' $(firstword $(MAKEFILE_LIST))
+
+
+# ----- Recipes ------------------------------------------------------------------------
+secrets: $(ENV_PATH)
+	set -o pipefail; \
+	jq -c -Rn -f env-to-json.jq < $< \
+	  | aws secretsmanager put-secret-value \
+	    --secret-id $(SECRETS_ID) --secret-string file:///dev/stdin \
+		> /dev/null
+	@echo "Updated $(SECRETS_ID) from $<"
+
+$(META_ENV_PATH):
+	aws cloudformation describe-stacks \
+	    --stack-name $(REGISTRY_STACK) \
+		--query 'Stacks[0].Outputs[].[OutputKey,OutputValue]' \
+		--output text | tr '\t' '=' > $@
+
+read:
+	aws cloudformation describe-stacks \
+		--stack-name $(REGISTRY_STACK) --query 'Stacks[0].Outputs' --output table
+	aws cloudformation describe-stacks \
+		--stack-name $(SECRETS_STACK) --query 'Stacks[0].Outputs' --output table
+
+login:
+	aws ecr get-login-password \
+		| docker login --username AWS --password-stdin $(RegistryUri)
 
 
 # ----- Deploy -------------------------------------------------------------------------
@@ -141,31 +168,8 @@ teardown-ecs:
 	AWS_PROFILE=$(AWS_PROFILE_IAM) aws cloudformation wait stack-delete-complete \
 		--stack-name $(ECS_STACK)
 
-# ----- Recipes ------------------------------------------------------------------------
-secrets: $(ENV_PATH)
-	set -o pipefail; \
-	jq -c -Rn -f env-to-json.jq < $< \
-	  | aws secretsmanager put-secret-value \
-	    --secret-id $(SECRETS_ID) --secret-string file:///dev/stdin \
-		> /dev/null
-	@echo "Updated $(SECRETS_ID) from $<"
 
-$(META_ENV_PATH):
-	aws cloudformation describe-stacks \
-	    --stack-name $(REGISTRY_STACK) \
-		--query 'Stacks[0].Outputs[].[OutputKey,OutputValue]' \
-		--output text | tr '\t' '=' > $@
-
-read:
-	aws cloudformation describe-stacks \
-		--stack-name $(REGISTRY_STACK) --query 'Stacks[0].Outputs' --output table
-	aws cloudformation describe-stacks \
-		--stack-name $(SECRETS_STACK) --query 'Stacks[0].Outputs' --output table
-
-login:
-	aws ecr get-login-password \
-		| docker login --username AWS --password-stdin $(RegistryUri)
-
+# ----- Testing ------------------------------------------------------------------------
 smoke-test-target-group:
 	aws elbv2 describe-target-health --target-group-arn "$(TARGETGROUP)" \
         --query 'TargetHealthDescriptions[].[Target.Id,TargetHealth.State]' --output table
@@ -177,6 +181,9 @@ smoke-test-cluster:
 
 smoke-test-elb:
 	curl -o /dev/null -s -w "HTTP Return Code: %{http_code}\n" http://$(ELB)/
+
+availability-test:
+	source ../../scripts/availability-test.sh "http://$(ELB)" "pha-cluster" "$(TASKS)"
 
 
 # ----- Signing ------------------------------------------------------------------------
