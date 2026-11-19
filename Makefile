@@ -1,7 +1,10 @@
 # practice-pha infrastructure: entry Makefile that governs infrastructure deployment.
 # Actual deployment is offloaded to sub-Makefiles called from here.
 #
-#   make init
+#   make all                   Initialize baseline, build infrastructure, deploy application
+#   make init				   Establish baseline for infrastructure and/or application
+#   make infrastructure        Build infrastructure that the application runs on
+#   make release               Pushes application updates to prod
 #   make login                 Authenticate platform with Docker if applicable
 #   make secrets               Pass secrets to platform if applicable
 #   make sign                  Sign image using cosign in registry
@@ -19,7 +22,7 @@ PROJECT 	  := practice-pha
 APP           := podtato-head-app
 DEPLOYMENT    := deploy/AWS
 ENV           := dev
-ENV_PATH      := .$(ENV).env
+ENV_PATH      := ".$(ENV).env.json"
 TEST_ENV_PATH := .test.env
 META_ENV_PATH := .meta.env
 CONTAINER     := pha-runtime
@@ -43,12 +46,13 @@ SHELL               := /bin/bash
 
 
 # ----- Phony Targets ------------------------------------------------------------------
-.PHONY: init login secrets verify teardown-stack teardown-stack-all \
-		push push-image sign \
+.PHONY: all init infrastructure login secrets verify teardown-stack teardown-all \
+		push push-image sign release \
 		test smoke-test availability-test \
 		local build-local run-local teardown-local \
 		local-test build-test run-test local-smoke-test teardown-test
 
+all: init login push-image sign verify infrastructure release
 push: push-image sign
 test: smoke-test availability-test
 local: build-local run-local teardown-local
@@ -59,7 +63,7 @@ help:
 
 
 # ----- Recipes ------------------------------------------------------------------------
-init login secrets sign verify $(META_ENV_PATH) test teardown-stack teardown-stack-all smoke-test availability-test:
+init infrastructure release login secrets sign verify $(META_ENV_PATH) test teardown-stack teardown-all smoke-test availability-test:
 	$(DEPLOY) $@
 
 push-image: login build-local

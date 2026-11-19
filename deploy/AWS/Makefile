@@ -1,15 +1,23 @@
-# practice-pha infrastructure: a thin wrapper around two CloudFormation stacks and
-# cosign. Requies an AWS login with a configured region. Most is configured here but
+# practice-pha infrastructure: a thin wrapper around the CloudFormation stacks and
+# cosign. Requires an AWS login with a configured region. Most is configured here but
 # requires some env variables that are provided automatically when invoking via the
 # root Makefile.
+#
+# Stacks in deploy order. Each imports only from stacks to its left, so tear down from
+# right to left:  registry  secrets  network  ingress  cluster  service
 #
 #   make deploy-registry
 #   make deploy-secrets
 #   make secrets        	   pushes .$(ENV).env into Secrets Manager
+#   make deploy-network
+#   make deploy-ingress
+#   make deploy-cluster        host changes: newer ECS AMI, instance type
+#   make deploy-service        a release: new image digest
 #   make $(COSIGN_PUB)         Exports public key locally
 #   make sign
 #   make verify
 #   make $(META_ENV_PATH)      Exports key data of stacks
+#   make release               Pushes application updates to prod
 #
 # Needs AWS CLI v2, jq and cosign.
 
@@ -20,18 +28,24 @@ AWS_PROFILE_IAM     := practice-pha-admin
 
 export AWS_PROFILE
 
-REGISTRY_CF         := cf-ecr-repository.json
+REGISTRY_CF         := cf-registry.yaml
 REGISTRY_STACK      := $(PROJECT)-registry
 
-SECRETS_CF          := cf-secrets.json
+SECRETS_CF          := cf-secrets.yaml
 SECRETS_STACK       := $(PROJECT)-$(APP)-$(ENV)-secrets
 SECRETS_ID          := $(APP)/$(ENV)/env
 
-NETWORK_CF          := cf-vpc.json
+NETWORK_CF          := cf-network.yaml
 NETWORK_STACK       := $(PROJECT)-network
 
-ECS_CF              := cf-ecs.json
-ECS_STACK           := $(PROJECT)-ecs
+INGRESS_CF          := cf-ingress.yaml
+INGRESS_STACK       := $(PROJECT)-ingress
+
+CLUSTER_CF          := cf-cluster.yaml
+CLUSTER_STACK       := $(PROJECT)-cluster
+
+SERVICE_CF          := cf-service.yaml
+SERVICE_STACK       := $(PROJECT)-$(APP)-$(ENV)-service
 
 COSIGN_PUB          := cosign.pub
 COSIGN_KEY          := awskms:///alias/$(PROJECT)-cosign
@@ -46,13 +60,13 @@ IMAGE_DIGEST        ?= $(shell aws ecr describe-images \
                             --image-ids imageTag=$(IMAGE_TAG) \
                             --query "imageDetails[0].imageDigest" --output text)
 TARGETGROUP         ?= $(shell aws cloudformation describe-stacks \
-                            --stack-name $(NETWORK_STACK) \
+                            --stack-name $(SERVICE_STACK) \
                             --query "Stacks[0].Outputs[?OutputKey=='ElbTargetGroup'].OutputValue" \
                             --output text)
 TASKS               ?= $(shell aws ecs list-tasks --cluster pha-cluster \
                             --query 'taskArns[]' --output text --no-cli-pager)
 ELB                 ?= $(shell aws cloudformation describe-stacks \
-                            --stack-name $(NETWORK_STACK) \
+                            --stack-name $(INGRESS_STACK) \
                             --query "Stacks[0].Outputs[?OutputKey=='LoadBalancerDnsName'].OutputValue" \
                             --output text)
 
@@ -61,19 +75,23 @@ SHELL               := /bin/bash
 .DELETE_ON_ERROR:
 
 
-
-
 # ----- Phony Targets ------------------------------------------------------------------
-.PHONY: help init read login sign verify \
-		deploy-secrets deploy-registry deploy-network deploy-ecs secrets \
+.PHONY: help init read login sign verify secrets \
+		deploy-secrets deploy-registry deploy-network deploy-ingress deploy-cluster deploy-service \
 		test smoke-test smoke-test-target-group smoke-test-cluster smoke-test-elb availability-test \
-		teardown-stack teardown-stack-all teardown-ecs teardown-registy teardown-network teardown-secrets \
+		teardown-all teardown-infrastructure teardown-app \
+		teardown-service teardown-cluster teardown-ingress teardown-registry teardown-network teardown-secrets
 
-init: deploy-registry deploy-secrets secrets deploy-network deploy-ecs $(META_ENV_PATH)
-test: smoke-test-target-group smoke-test-cluster smoke-test-elb availability-test
+init: deploy-registry deploy-secrets secrets $(META_ENV_PATH)
+infrastructure: deploy-network deploy-ingress deploy-cluster 
+release: deploy-service
+
+test: smoke-test availability-test
 smoke-test: smoke-test-target-group smoke-test-cluster smoke-test-elb
-teardown-stack: teardown-ecs teardown-network
-teardown-stack-all: teardown-stack teardown-registry teardown-secrets
+
+teardown-app: teardown-service 
+teardown-infrastructure: teardown-cluster teardown-ingress teardown-network
+teardown-all: teardown-app teardown-infrastructure teardown-registry teardown-secrets
 
 help:
 	@sed -n '1,/^$$/s/^# \{0,1\}//p' $(firstword $(MAKEFILE_LIST))
@@ -81,10 +99,8 @@ help:
 
 # ----- Recipes ------------------------------------------------------------------------
 secrets: $(ENV_PATH)
-	set -o pipefail; \
-	jq -c -Rn -f env-to-json.jq < $< \
-	  | aws secretsmanager put-secret-value \
-	    --secret-id $(SECRETS_ID) --secret-string file:///dev/stdin \
+	aws secretsmanager put-secret-value \
+	    --secret-id $(SECRETS_ID) --secret-string file://$< \
 		> /dev/null
 	@echo "Updated $(SECRETS_ID) from $<"
 
@@ -100,9 +116,9 @@ read:
 	aws cloudformation describe-stacks \
 		--stack-name $(SECRETS_STACK) --query 'Stacks[0].Outputs' --output table
 
-login:
+login: $(META_ENV_PATH)
 	aws ecr get-login-password \
-		| docker login --username AWS --password-stdin $(RegistryUri)
+		| docker login $(RegistryUri) --username AWS --password-stdin 
 
 
 # ----- Deploy -------------------------------------------------------------------------
@@ -133,14 +149,32 @@ deploy-network:
 		--parameter-overrides ProjectName=$(PROJECT) \
 		--tags project=$(PROJECT)
 
-deploy-ecs:
+deploy-ingress:
 	AWS_PROFILE=$(AWS_PROFILE_IAM) aws cloudformation deploy \
-		--template-file $(ECS_CF) \
-		--stack-name $(ECS_STACK) \
+		--template-file $(INGRESS_CF) \
+		--stack-name $(INGRESS_STACK) \
 		--capabilities CAPABILITY_IAM \
 		--no-fail-on-empty-changeset \
-		--parameter-overrides ProjectName=$(PROJECT) NetworkStackName=$(NETWORK_STACK) SecretsStackName=$(SECRETS_STACK) RepositoryUri=$(REPOSITORY_URI) ImageDigest=$(IMAGE_DIGEST) \
+		--parameter-overrides ProjectName=$(PROJECT) NetworkStackName=$(NETWORK_STACK) \
 		--tags project=$(PROJECT)
+
+deploy-cluster:
+	AWS_PROFILE=$(AWS_PROFILE_IAM) aws cloudformation deploy \
+		--template-file $(CLUSTER_CF) \
+		--stack-name $(CLUSTER_STACK) \
+		--capabilities CAPABILITY_IAM \
+		--no-fail-on-empty-changeset \
+		--parameter-overrides ProjectName=$(PROJECT) NetworkStackName=$(NETWORK_STACK) \
+		--tags project=$(PROJECT)
+
+deploy-service:
+	AWS_PROFILE=$(AWS_PROFILE_IAM) aws cloudformation deploy \
+		--template-file $(SERVICE_CF) \
+		--stack-name $(SERVICE_STACK) \
+		--capabilities CAPABILITY_IAM \
+		--no-fail-on-empty-changeset \
+		--parameter-overrides ProjectName=$(PROJECT) NetworkStackName=$(NETWORK_STACK) IngressStackName=$(INGRESS_STACK) ClusterStackName=$(CLUSTER_STACK) SecretsStackName=$(SECRETS_STACK) RepositoryURI=$(REPOSITORY_URI) ImageDigest=$(IMAGE_DIGEST) \
+		--tags project=$(PROJECT) app=$(APP) env=$(ENV)
 
 
 # ----- Teardown -----------------------------------------------------------------------
@@ -162,11 +196,23 @@ teardown-network:
 	AWS_PROFILE=$(AWS_PROFILE_IAM) aws cloudformation wait stack-delete-complete \
 		--stack-name $(NETWORK_STACK)
 
-teardown-ecs:
+teardown-service:
 	AWS_PROFILE=$(AWS_PROFILE_IAM) aws cloudformation delete-stack \
-		--stack-name $(ECS_STACK)
+		--stack-name $(SERVICE_STACK)
 	AWS_PROFILE=$(AWS_PROFILE_IAM) aws cloudformation wait stack-delete-complete \
-		--stack-name $(ECS_STACK)
+		--stack-name $(SERVICE_STACK)
+
+teardown-cluster:
+	AWS_PROFILE=$(AWS_PROFILE_IAM) aws cloudformation delete-stack \
+		--stack-name $(CLUSTER_STACK)
+	AWS_PROFILE=$(AWS_PROFILE_IAM) aws cloudformation wait stack-delete-complete \
+		--stack-name $(CLUSTER_STACK)
+
+teardown-ingress:
+	AWS_PROFILE=$(AWS_PROFILE_IAM) aws cloudformation delete-stack \
+		--stack-name $(INGRESS_STACK)
+	AWS_PROFILE=$(AWS_PROFILE_IAM) aws cloudformation wait stack-delete-complete \
+		--stack-name $(INGRESS_STACK)
 
 
 # ----- Testing ------------------------------------------------------------------------
@@ -181,6 +227,8 @@ smoke-test-cluster:
 
 smoke-test-elb:
 	curl -o /dev/null -s -w "HTTP Return Code: %{http_code}\n" http://$(ELB)/
+
+# acceptance-test:
 
 availability-test:
 	source ../../scripts/availability-test.sh "http://$(ELB)" "pha-cluster" "$(TASKS)"

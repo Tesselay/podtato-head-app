@@ -1,0 +1,308 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  practice-pha network stack: VPC, public and app subnets in two AZs, internet gateway,
+  a NAT gateway per AZ and the route tables. Nothing app-specific lives here: the
+  ingress, cluster and service stacks import from it.
+Parameters:
+  ProjectName:
+    Type: String
+    Default: practice-pha
+    AllowedPattern: "^[a-z0-9-]+$"
+    Description: Prefix for the Name tags.
+  AZ1:
+    Type: AWS::EC2::AvailabilityZone::Name
+    Default: eu-central-1a
+  AZ2:
+    Type: AWS::EC2::AvailabilityZone::Name
+    Default: eu-central-1b
+  VPCCIDR:
+    Type: String
+    Default: 10.0.0.0/16
+  AZ1PublicSubnetCIDR:
+    Type: String
+    Default: 10.0.0.0/24
+  AZ1PrivateSubnetCIDR:
+    Type: String
+    Default: 10.0.10.0/24
+  AZ2PublicSubnetCIDR:
+    Type: String
+    Default: 10.0.1.0/24
+  AZ2PrivateSubnetCIDR:
+    Type: String
+    Default: 10.0.11.0/24
+
+Resources:
+  # ----- VPC and Internet Gateway -----------------------------------------------------
+  # Entities
+  VPC:
+    Type: AWS::EC2::VPC
+    Metadata:
+      com.aws.cloudformation.Context:
+        trust:
+          src: infer
+          conf: low
+          note: "rationale not documented"
+    Properties:
+      CidrBlock: !Ref VPCCIDR
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-vpc
+  IGW:
+    Type: AWS::EC2::InternetGateway
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Project is a public web app.
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-igw
+  VPCAttachmentIGW:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Metadata:
+      com.aws.cloudformation.Context:
+        trust:
+          src: infer
+          conf: low
+          note: "rationale not documented"
+    Properties:
+      InternetGatewayId: !Ref IGW
+      VpcId: !Ref VPC
+  # Routing
+  RouteTablePublic:
+    Type: AWS::EC2::RouteTable
+    Metadata:
+      com.aws.cloudformation.Context:
+        trust:
+          src: infer
+          conf: low
+          note: "rationale not documented"
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-rt-public
+  RouteTablePublicRoute:
+    Type: AWS::EC2::Route
+    Metadata:
+      com.aws.cloudformation.Context:
+        trust:
+          src: infer
+          conf: low
+          note: "rationale not documented"
+    DependsOn: VPCAttachmentIGW
+    Properties:
+      RouteTableId: !Ref RouteTablePublic
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref IGW
+
+  # ----- AZ 1 -------------------------------------------------------------------------
+  # Entities
+  AZ1PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Location for NAT Gateway.
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Ref AZ1
+      CidrBlock: !Ref AZ1PublicSubnetCIDR
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-public-a
+  AZ1PrivateSubnet:
+    Type: AWS::EC2::Subnet
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Location for web app for better isolation.
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Ref AZ1
+      CidrBlock: !Ref AZ1PrivateSubnetCIDR
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-app-a
+  AZ1NATGateway:
+    Type: AWS::EC2::NatGateway
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Cheapest option for web app egress (secrets, ECS, etc.)
+    Properties:
+      AllocationId: !GetAtt AZ1NatGatewayEIP.AllocationId
+      SubnetId: !Ref AZ1PublicSubnet
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-nat-a
+  AZ1NatGatewayEIP:
+    Type: AWS::EC2::EIP
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Required.
+    DependsOn: VPCAttachmentIGW
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-nat-a-eip
+  # Routing
+  RouteTablePublicAssociationAZ1PublicSubnet:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Metadata:
+      com.aws.cloudformation.Context:
+        trust:
+          src: infer
+          conf: low
+          note: "rationale not documented"
+    Properties:
+      RouteTableId: !Ref RouteTablePublic
+      SubnetId: !Ref AZ1PublicSubnet
+  AZ1RouteTablePrivate:
+    Type: AWS::EC2::RouteTable
+    Metadata:
+      com.aws.cloudformation.Context:
+        trust:
+          src: infer
+          conf: low
+          note: "rationale not documented"
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-rt-app-a
+  AZ1RouteTablePrivateRoute:
+    Metadata:
+      com.aws.cloudformation.Context:
+        trust:
+          src: infer
+          conf: low
+          note: "rationale not documented"
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref AZ1RouteTablePrivate
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref AZ1NATGateway
+  AZ1RouteTablePrivateAssociationAZ1PrivateSubnet:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Metadata:
+      com.aws.cloudformation.Context:
+        trust:
+          src: infer
+          conf: low
+          note: "rationale not documented"
+    Properties:
+      RouteTableId: !Ref AZ1RouteTablePrivate
+      SubnetId: !Ref AZ1PrivateSubnet
+
+  # ----- AZ 2 -------------------------------------------------------------------------
+  # Entities
+  AZ2PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Location for NAT Gateway.
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Ref AZ2
+      CidrBlock: !Ref AZ2PublicSubnetCIDR
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-public-b
+  AZ2PrivateSubnet:
+    Type: AWS::EC2::Subnet
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Location for web app for better isolation.
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Ref AZ2
+      CidrBlock: !Ref AZ2PrivateSubnetCIDR
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-app-b
+  AZ2NatGateway:
+    Type: AWS::EC2::NatGateway
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Cheapest option for web app egress (secrets, ECS, etc.)
+    Properties:
+      AllocationId: !GetAtt AZ2NatGatewayEIP.AllocationId
+      SubnetId: !Ref AZ2PublicSubnet
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-nat-b
+  AZ2NatGatewayEIP:
+    Type: AWS::EC2::EIP
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Required.
+    DependsOn: VPCAttachmentIGW
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-nat-b-eip
+  # Routing
+  RouteTablePublicAssociationAZ2PublicSubnet:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Metadata:
+      com.aws.cloudformation.Context:
+        trust:
+          src: infer
+          conf: low
+          note: "rationale not documented"
+    Properties:
+      RouteTableId: !Ref RouteTablePublic
+      SubnetId: !Ref AZ2PublicSubnet
+  AZ2RouteTablePrivate:
+    Type: AWS::EC2::RouteTable
+    Metadata:
+      com.aws.cloudformation.Context:
+        trust:
+          src: infer
+          conf: low
+          note: "rationale not documented"
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-rt-app-b
+  AZ2RouteTablePrivateRoute:
+    Type: AWS::EC2::Route
+    Metadata:
+      com.aws.cloudformation.Context:
+        trust:
+          src: infer
+          conf: low
+          note: "rationale not documented"
+    Properties:
+      RouteTableId: !Ref AZ2RouteTablePrivate
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref AZ2NatGateway
+  AZ2RouteTablePrivateAssociationAZ2PrivateSubnet:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Metadata:
+      com.aws.cloudformation.Context:
+        trust:
+          src: infer
+          conf: low
+          note: "rationale not documented"
+    Properties:
+      RouteTableId: !Ref AZ2RouteTablePrivate
+      SubnetId: !Ref AZ2PrivateSubnet
+
+Outputs:
+  VPCID:
+    Value: !Ref VPC
+    Export:
+      Name: !Sub ${AWS::StackName}-VpcId
+  PublicSubnetIDs:
+    Description: Comma-separated; for the internet-facing ALB in the ingress stack.
+    Value: !Join [",", [!Ref AZ1PublicSubnet, !Ref AZ2PublicSubnet]]
+    Export:
+      Name: !Sub ${AWS::StackName}-PublicSubnetIds
+  AppSubnetIDs:
+    Description: Comma-separated; use Fn::Split in the importing stack.
+    Value: !Join [",", [!Ref AZ1PrivateSubnet, !Ref AZ2PrivateSubnet]]
+    Export:
+      Name: !Sub ${AWS::StackName}-AppSubnetIds

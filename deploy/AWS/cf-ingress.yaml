@@ -1,0 +1,98 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  practice-pha ingress stack: the internet-facing ALB, its security group and the HTTP
+  listener. Services attach from their own stacks with a target group, a listener rule
+  and the security group rules they need.
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: practice-pha
+    AllowedPattern: "^[a-z0-9-]+$"
+    Description: Prefix for the Name tags.
+  NetworkStackName:
+    Type: String
+    Description: Name of the stack deployed from cf-network.yaml
+
+Resources:
+  ElasticLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Metadata:
+      com.aws.cloudformation.Context:
+        trust:
+          src: infer
+          conf: low
+          note: "rationale not documented"
+    Properties:
+      Type: application
+      Scheme: internet-facing
+      Subnets: !Split
+        - ","
+        - Fn::ImportValue: !Sub ${NetworkStackName}-PublicSubnetIds
+      SecurityGroups:
+        - !Ref SecurityGroupELB
+      LoadBalancerAttributes:
+        - Key: routing.http.drop_invalid_header_fields.enabled
+          Value: "true"
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-alb
+  ELBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Answers 503 until a service stack adds a listener rule that forwards to its target group, and again once that service is torn down.
+    Properties:
+      DefaultActions:
+        - Type: fixed-response
+          FixedResponseConfig:
+            StatusCode: "503"
+            ContentType: text/plain
+            MessageBody: No service is attached to this load balancer.
+      LoadBalancerArn: !Ref ElasticLoadBalancer
+      Port: 80
+      Protocol: HTTP
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-alb-listener
+  SecurityGroupELB:
+    Type: AWS::EC2::SecurityGroup
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Egress towards tasks is managed by the ECS services stack.
+    Properties:
+      GroupDescription: Security group for the practice project load balancer.
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+          Description: HTTP from anywhere
+      SecurityGroupEgress:
+        - IpProtocol: icmp
+          FromPort: 252
+          ToPort: 86
+          CidrIp: 255.255.255.255/32
+          Description: Matches no traffic, so the default allow-all egress rule stays off
+      VpcId:
+        Fn::ImportValue: !Sub ${NetworkStackName}-VpcId
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-sg-alb
+
+Outputs:
+  LoadBalancerSecurityGroupID:
+    Description: For the service stacks' rules between the ALB and their tasks.
+    Value: !GetAtt SecurityGroupELB.GroupId
+    Export:
+      Name: !Sub ${AWS::StackName}-LoadBalancerSecurityGroupId
+  ListenerArn:
+    Description: Service stacks attach their listener rules here.
+    Value: !Ref ELBListener
+    Export:
+      Name: !Sub ${AWS::StackName}-ListenerArn
+  LoadBalancerDNSName:
+    Description: Open http://<this name> in a browser once a domain exists.
+    Value: !GetAtt ElasticLoadBalancer.DNSName
+    Export:
+      Name: !Sub ${AWS::StackName}-LoadBalancerDnsName

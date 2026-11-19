@@ -1,0 +1,213 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'practice-pha registry stack: KMS keys for ECR encryption and
+  cosign signing, registry-wide scan on push, and the repository creation
+  template for prod/ repositories. Everything here is long-lived and should
+  rarely change.'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: practice-pha
+    AllowedPattern: ^[a-z0-9-]+$
+    Description: Prefix for key aliases and resource names. cosign finds its key
+      through the alias.
+
+Resources:
+  # ----- Encryption key for ECR -------------------------------------------------------
+  ECRKey:
+    Type: AWS::KMS::Key
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Symmetric key that encrypts the images in repositories created from the
+          prod/ template since ECR only accepts symmetric keys.
+    Properties:
+      Description: !Sub '${ProjectName}: encrypts ECR repositories created from the
+        prod/ template'
+      KeySpec: SYMMETRIC_DEFAULT
+      KeyUsage: ENCRYPT_DECRYPT
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: EnableIamPolicies
+            Effect: Allow
+            Principal:
+              AWS: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:root
+            Action: kms:*
+            Resource: '*'
+
+  ECRKeyAlias:
+    Type: AWS::KMS::Alias
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: A friendly name for the console and CLI.
+    Properties:
+      AliasName: !Sub alias/${ProjectName}-ecr
+      TargetKeyId: !Ref ECRKey
+
+  # ----- Signing key for cosign -------------------------------------------------------
+
+  # - Same key policy as ECRKey: access is granted through IAM, here CosignSigningPolicy.
+  CosignKey:
+    Type: AWS::KMS::Key
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Asymmetric signing key for cosign, used as
+          awskms:///alias/<ProjectName>-cosign. The private half never leaves
+          KMS.
+    Properties:
+      Description: !Sub '${ProjectName}: signs container images with cosign'
+      KeySpec: ECC_NIST_P256
+      KeyUsage: SIGN_VERIFY
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: EnableIamPolicies
+            Effect: Allow
+            Principal:
+              AWS: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:root
+            Action: kms:*
+            Resource: '*'
+
+  # cosign addresses the key through this alias, so tools never need the key ID.
+  CosignKeyAlias:
+    Type: AWS::KMS::Alias
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: cosign addresses the key through this alias, so tools never need the key
+          ID.
+    Properties:
+      AliasName: !Sub alias/${ProjectName}-cosign
+      TargetKeyId: !Ref CosignKey
+
+  CosignSigningPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Exactly the three KMS calls cosign makes when it signs with a KMS key.
+          Needs to be attached to the user or CI role that signs.
+    Properties:
+      Description: !Sub '${ProjectName}: sign container images with the cosign KMS key'
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - kms:DescribeKey
+              - kms:GetPublicKey
+              - kms:Sign
+            Resource: !GetAtt CosignKey.Arn
+
+  # ----- Image scanning ---------------------------------------------------------------
+  RegistryScanning:
+    Type: AWS::ECR::RegistryScanningConfiguration
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Basic scan on push for every repository.
+    Properties:
+      ScanType: BASIC
+      Rules:
+        - ScanFrequency: SCAN_ON_PUSH
+          RepositoryFilters:
+            - Filter: '*'
+              FilterType: WILDCARD
+
+  # ----- Repository creation template for prod ----------------------------------------
+  ECRTemplateRole:
+    Type: AWS::IAM::Role
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Required because the template uses tags and a KMS key.
+    Properties:
+      Description: Assumed by ECR when it creates repositories from the prod/
+        repository creation template
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ecr.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: !Sub ${ProjectName}-ecr-template-permissions
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ecr:CreateRepository
+                  - ecr:ReplicateImage
+                  - ecr:TagResource
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - kms:CreateGrant
+                  - kms:RetireGrant
+                  - kms:DescribeKey
+                Resource: !GetAtt ECRKey.Arn
+
+  ProdRepositoryCreationTemplate:
+    Type: AWS::ECR::RepositoryCreationTemplate
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Image immutability for integrity. Expire older images for storage saving.
+    Properties:
+      Prefix: prod
+      Description: For repositories under prod/ created by pull-through cache, create
+        on push or replication
+      AppliedFor:
+        - PULL_THROUGH_CACHE
+        - CREATE_ON_PUSH
+        - REPLICATION
+      EncryptionConfiguration:
+        EncryptionType: KMS
+        KmsKey: !GetAtt ECRKey.Arn
+      ResourceTags:
+        - Key: project
+          Value: !Ref ProjectName
+      ImageTagMutability: IMMUTABLE_WITH_EXCLUSION
+      ImageTagMutabilityExclusionFilters:
+        - ImageTagMutabilityExclusionFilterType: WILDCARD
+          ImageTagMutabilityExclusionFilterValue: latest
+        - ImageTagMutabilityExclusionFilterType: WILDCARD
+          ImageTagMutabilityExclusionFilterValue: beta*
+      LifecyclePolicy: |
+        {
+          "rules": [
+            {
+              "rulePriority": 1,
+              "description": "Expire images older than 14 days",
+              "selection": {
+                "tagStatus": "any",
+                "countType": "sinceImagePushed",
+                "countUnit": "days",
+                "countNumber": 14
+              },
+              "action": { "type": "expire" }
+            }
+          ]
+        }
+      CustomRoleArn: !GetAtt ECRTemplateRole.Arn
+
+Outputs:
+  ECRKeyArn:
+    Description: Encrypts repositories created from the prod/ template
+    Value: !GetAtt ECRKey.Arn
+  CosignKeyURI:
+    Description: Passed to cosign as --key
+    Value: !Sub awskms:///${CosignKeyAlias}
+  CosignSigningPolicyArn:
+    Description: Attach to the user or CI role that signs images
+    Value: !Ref CosignSigningPolicy
+  TemplateRoleArn:
+    Description: The role ECR assumes when it creates prod/ repositories
+    Value: !GetAtt ECRTemplateRole.Arn
+  RegistryURI:
+    Description: Registry host for docker login, push and pull
+    Value: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.${AWS::URLSuffix}

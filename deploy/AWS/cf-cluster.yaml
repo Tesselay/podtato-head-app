@@ -1,0 +1,199 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  practice-pha cluster stack: the ECS cluster, its capacity provider and the EC2
+  container instances (Auto Scaling group, launch template, host role and security
+  group). Deploy it for host changes; releases only touch the service stack.
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: practice-pha
+    AllowedPattern: "^[a-z0-9-]+$"
+    Description: Prefix for resource names.
+  ClusterName:
+    Type: String
+    Default: pha-cluster
+    AllowedPattern: "^[a-z0-9-]+$"
+  # Re-deploy this stack to move to new versions of the AMI
+  ECSAMIID:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ecs/optimized-ami/amazon-linux-2023/recommended/image_id
+  InstanceType:
+    Type: String
+    Default: t3.micro
+    Description: >-
+      Each awsvpc task takes one network interface on its host: t3.micro (2 interfaces)
+      fits one task, t3.small (3) fits two.
+  NetworkStackName:
+    Type: String
+    Description: Name of the stack deployed from cf-network.yaml
+
+Resources:
+  # ----- Cluster and capacity ---------------------------------------------------------
+  ECSCluster:
+    Type: AWS::ECS::Cluster
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Container Insights for better metrics.
+    Properties:
+      ClusterName: !Ref ClusterName
+      ClusterSettings:
+        - Name: containerInsights
+          Value: enabled
+
+  ECSCapacityProvider:
+    Type: AWS::ECS::CapacityProvider
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Have ECS manage scaling.
+    Properties:
+      AutoScalingGroupProvider:
+        AutoScalingGroupArn: !Ref EC2AutoScalingGroup
+        ManagedDraining: ENABLED
+        ManagedTerminationProtection: DISABLED
+        ManagedScaling:
+          MaximumScalingStepSize: 1
+          MinimumScalingStepSize: 1
+          Status: ENABLED
+          TargetCapacity: 100
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-ecs-capacity-provider
+
+  ECSCapacityProviderAssociation:
+    Type: AWS::ECS::ClusterCapacityProviderAssociations
+    Metadata:
+      com.aws.cloudformation.Context:
+        trust:
+          src: infer
+          conf: low
+          note: "rationale not documented"
+    Properties:
+      CapacityProviders:
+        - !Ref ECSCapacityProvider
+      Cluster: !Ref ECSCluster
+      DefaultCapacityProviderStrategy:
+        - Base: 0
+          CapacityProvider: !Ref ECSCapacityProvider
+          Weight: 1
+
+  # ----- Container instances (EC2 hosts) ----------------------------------------------
+  EC2InstanceRole:
+    Type: AWS::IAM::Role
+    Metadata:
+      com.aws.cloudformation.Context:
+        trust:
+          src: infer
+          conf: low
+          note: "rationale not documented"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore
+
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Metadata:
+      com.aws.cloudformation.Context:
+        trust:
+          src: infer
+          conf: low
+          note: "rationale not documented"
+    Properties:
+      Roles:
+        - !Ref EC2InstanceRole
+
+  # No DesiredCapacity: the capacity provider's managed scaling owns it.
+  EC2AutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Metadata:
+      com.aws.cloudformation.Context:
+        trust:
+          src: infer
+          conf: low
+          note: "rationale not documented"
+    Properties:
+      LaunchTemplate:
+        LaunchTemplateId: !Ref EC2LaunchTemplate
+        Version: !GetAtt EC2LaunchTemplate.LatestVersionNumber
+      MaxSize: "10"
+      MinSize: "1"
+      VPCZoneIdentifier: !Split
+        - ","
+        - Fn::ImportValue: !Sub ${NetworkStackName}-AppSubnetIds
+      MetricsCollection:
+        - Granularity: "1Minute"
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-asg
+          PropagateAtLaunch: "false"
+
+  EC2LaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Metadata:
+      com.aws.cloudformation.Context:
+        trust:
+          src: infer
+          conf: low
+          note: "rationale not documented"
+    Properties:
+      LaunchTemplateData:
+        ImageId: !Ref ECSAMIID
+        InstanceType: !Ref InstanceType
+        IamInstanceProfile:
+          Arn: !GetAtt EC2InstanceProfile.Arn
+        SecurityGroupIds:
+          - !Ref SecurityGroupEC2
+        MetadataOptions:
+          HttpTokens: required
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - Key: Name
+                Value: !Sub ${ProjectName}-ecs-host
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            echo ECS_CLUSTER=${ECSCluster} >> /etc/ecs/ecs.config
+            echo ECS_AWSVPC_BLOCK_IMDS=true >> /etc/ecs/ecs.config
+  SecurityGroupEC2:
+    Type: AWS::EC2::SecurityGroup
+    Metadata:
+      com.aws.cloudformation.Context:
+        trust:
+          src: infer
+          conf: low
+          note: "rationale not documented"
+    Properties:
+      GroupDescription: "ECS container instances: no inbound, HTTPS out for the ECS and SSM agents"
+      VpcId:
+        Fn::ImportValue: !Sub ${NetworkStackName}-VpcId
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-sg-host
+
+Outputs:
+  ClusterName:
+    Description: For the services' Cluster property and the Makefile's smoke tests.
+    Value: !Ref ECSCluster
+    Export:
+      Name: !Sub ${AWS::StackName}-ClusterName
+  CapacityProviderName:
+    Description: >-
+      For the services' capacity provider strategy. Its association with the cluster is
+      part of this stack, so it exists before any service stack can import this.
+    Value: !Ref ECSCapacityProvider
+    Export:
+      Name: !Sub ${AWS::StackName}-CapacityProviderName

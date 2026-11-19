@@ -1,0 +1,279 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  practice-pha service stack for one app: the task security group and its rules to and
+  from the ALB, the target group and listener rule, the task definition and the ECS
+  service. A release (new image digest) touches only this stack.
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: practice-pha
+    AllowedPattern: "^[a-z0-9-]+$"
+    Description: Prefix for resource names.
+  AppPort:
+    Type: Number
+    Default: 8080
+    Description: >-
+      Port the app listens on; the container, target group, health checks and security
+      group rules all follow it.
+  PathPattern:
+    Type: String
+    Default: "/*"
+    Description: Requests whose path matches are forwarded to this service.
+  ListenerRulePriority:
+    Type: Number
+    Default: 100
+    MinValue: 1
+    MaxValue: 50000
+    Description: Unique per listener; lower numbers are evaluated first.
+  AppComponents:
+    Type: String
+    Description: App specific env var for the components to be rendered.
+    Default: all
+    AllowedValues: [all, leftArm, rightArm, leftLeg, rightLeg]
+  AppStartupDelay:
+    Type: String
+    Description: App specific env var to delay runtime startup.
+    Default: "0s"
+  RepositoryURI:
+    Type: String
+    Description: >-
+      URI of the app's ECR repository; the Makefile builds it from the registry stack's
+      RegistryURI output.
+  ImageDigest:
+    Type: String
+    AllowedPattern: "^sha256:[a-f0-9]{64}$"
+    Description: Image digest as sourced from invocation.
+  NetworkStackName:
+    Type: String
+    Description: Name of the stack deployed from cf-network.yaml
+  IngressStackName:
+    Type: String
+    Description: Name of the stack deployed from cf-ingress.yaml
+  ClusterStackName:
+    Type: String
+    Description: Name of the stack deployed from cf-cluster.yaml
+  SecretsStackName:
+    Type: String
+    Description: Name of the stack deployed from cf-secrets.yaml
+
+Resources:
+  # ----- Task Connectivity ------------------------------------------------------------
+  SecurityGroupECSTask:
+    Type: AWS::EC2::SecurityGroup
+    Metadata:
+      com.aws.cloudformation.Context:
+        trust:
+          src: infer
+          conf: low
+          note: "rationale not documented"
+    Properties:
+      GroupDescription: Security group for the network interfaces of the practice project app tasks (awsvpc).
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+          Description: HTTPS calls made by the app itself
+      VpcId:
+        Fn::ImportValue: !Sub ${NetworkStackName}-VpcId
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-sg-task
+  SecurityGroupELBHealthChecksIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: ECS service stack owns SG rules required for its tasks to communicate since they only make sense in context of the service.
+    Properties:
+      GroupId: !GetAtt SecurityGroupECSTask.GroupId
+      SourceSecurityGroupId:
+        Fn::ImportValue: !Sub ${IngressStackName}-LoadBalancerSecurityGroupId
+      IpProtocol: tcp
+      FromPort: !Ref AppPort
+      ToPort: !Ref AppPort
+      Description: App traffic and health checks from the ALB
+  SecurityGroupELBHealthChecksEgress:
+    Type: AWS::EC2::SecurityGroupEgress
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: ECS service stack owns SG rules required for its tasks to communicate since they only make sense in context of the service.
+    Properties:
+      GroupId:
+        Fn::ImportValue: !Sub ${IngressStackName}-LoadBalancerSecurityGroupId
+      DestinationSecurityGroupId: !GetAtt SecurityGroupECSTask.GroupId
+      IpProtocol: tcp
+      FromPort: !Ref AppPort
+      ToPort: !Ref AppPort
+      Description: App traffic and health checks to the tasks
+
+  # ----- Attachment to the load balancer ----------------------------------------------
+  ELBTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: ECS service stack owns target group configuration required for traffic to be distributed to tasks since it only make sense in context of the service.
+    Properties:
+      HealthCheckPath: /healthz
+      HealthCheckIntervalSeconds: 10
+      HealthyThresholdCount: 2
+      Port: !Ref AppPort
+      Protocol: HTTP
+      TargetType: ip
+      HealthCheckProtocol: HTTP
+      VpcId:
+        Fn::ImportValue: !Sub ${NetworkStackName}-VpcId
+      TargetGroupAttributes:
+        - Key: deregistration_delay.timeout_seconds
+          Value: "30"
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-alb-tg
+  ELBListenerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: ECS service stack owns listener configuration required for traffic to be distributed to tasks since it only make sense in context of the service.
+    Properties:
+      ListenerArn:
+        Fn::ImportValue: !Sub ${IngressStackName}-ListenerArn
+      Priority: !Ref ListenerRulePriority
+      Conditions:
+        - Field: path-pattern
+          PathPatternConfig:
+            Values:
+              - !Ref PathPattern
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref ELBTargetGroup
+
+  # ----- Task Definition --------------------------------------------------------------
+  ECSTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Metadata:
+      com.aws.cloudformation.Context:
+        trust:
+          src: infer
+          conf: low
+          note: "rationale not documented"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ecs-tasks.amazonaws.com
+            Action:
+              - sts:AssumeRole
+            Condition:
+              ArnLike:
+                aws:SourceArn: !Sub "arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:*"
+              StringEquals:
+                aws:SourceAccount: !Sub ${AWS::AccountId}
+      Path: /
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+        - Fn::ImportValue: !Sub ${SecretsStackName}-AppSecretReadPolicy
+  ECSTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Non-sensitive env vars are defined here for simplicity.
+    Properties:
+      ExecutionRoleArn: !GetAtt ECSTaskExecutionRole.Arn
+      NetworkMode: awsvpc
+      Cpu: "256"
+      Memory: "512"
+      ContainerDefinitions:
+        - Name: !Ref ProjectName
+          Image: !Sub ${RepositoryURI}@${ImageDigest}
+          PortMappings:
+            - ContainerPort: !Ref AppPort
+              Protocol: tcp
+          Environment:
+            - Name: PORT
+              Value: !Ref AppPort
+            - Name: PODTATO_COMPONENT
+              Value: !Ref AppComponents
+            - Name: PODTATO_STARTUP_DELAY
+              Value: !Ref AppStartupDelay
+          Secrets:
+            - Name: PODTATO_SECRET_MESSAGE
+              ValueFrom: !Sub
+                - "${ARN}:PODTATO_SECRET_MESSAGE::"
+                - ARN:
+                    Fn::ImportValue: !Sub ${SecretsStackName}-SecretsArn
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref ECSLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: app
+  ECSLogGroup:
+    Type: AWS::Logs::LogGroup
+    Metadata:
+      com.aws.cloudformation.Context:
+        trust:
+          src: infer
+          conf: low
+          note: "rationale not documented"
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      RetentionInDays: 7
+
+  # ----- Service ----------------------------------------------------------------------
+  ECSService:
+    Type: AWS::ECS::Service
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: "Dependencies:
+          - ELBListenerRule: ECS only accepts a target group that is already attached to a load balancer, and the listener rule is what attaches this one.
+          - The two security group rules: the first tasks must be reachable for their health checks, and on delete the service and its tasks go before the rules do."
+    DependsOn:
+      - ELBListenerRule
+      - SecurityGroupELBHealthChecksIngress
+      - SecurityGroupELBHealthChecksEgress
+    Properties:
+      Cluster:
+        Fn::ImportValue: !Sub ${ClusterStackName}-ClusterName
+      TaskDefinition: !Ref ECSTaskDefinition
+      CapacityProviderStrategy:
+        - CapacityProvider:
+            Fn::ImportValue: !Sub ${ClusterStackName}-CapacityProviderName
+          Weight: 1
+      SchedulingStrategy: REPLICA
+      DesiredCount: 2
+      LoadBalancers:
+        - ContainerName: !Ref ProjectName
+          ContainerPort: !Ref AppPort
+          TargetGroupArn: !Ref ELBTargetGroup
+      HealthCheckGracePeriodSeconds: 60
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          SecurityGroups:
+            - !GetAtt SecurityGroupECSTask.GroupId
+          Subnets: !Split
+            - ","
+            - Fn::ImportValue: !Sub ${NetworkStackName}-AppSubnetIds
+      DeploymentConfiguration:
+        MaximumPercent: 200
+        MinimumHealthyPercent: 100
+        DeploymentCircuitBreaker:
+          Enable: true
+          Rollback: true
+      DeploymentController:
+        Type: ECS
+      ServiceConnectConfiguration:
+        Enabled: false
+      EnableECSManagedTags: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-ecs-service
+
+Outputs:
+  ELBTargetGroup:
+    Description: For make smoke-test-target-group.
+    Value: !Ref ELBTargetGroup
