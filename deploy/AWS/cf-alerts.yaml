@@ -8,9 +8,10 @@ Parameters:
     Default: practice-pha
     AllowedPattern: "^[a-z0-9-]+$"
     Description: Prefix for resource names.
-  SecretsStackName:
+  AlertEmail:
     Type: String
-    Description: Name of the stack deployed from cf-secrets.yaml
+    AllowedPattern: '^[^@\s]+@[^@\s]+\.[^@\s]+$'
+    ConstraintDescription: must be an email address
 
 Resources:
   SNSTopicAlerts:
@@ -22,10 +23,7 @@ Resources:
       TopicName: !Sub ${ProjectName}-alerts
       DisplayName: !Sub "${ProjectName} alerts"
       Subscription:
-        - Endpoint: !Sub 
-            - "{{resolve:secretsmanager:${ARN}:SecretString:PHA_SNS_EMAIL}}"
-            - ARN:
-                Fn::ImportValue: !Sub ${SecretsStackName}-SecretsArn
+        - Endpoint: !Ref AlertEmail
           Protocol: email
   SNSTopicPolicyMetrics:
     Type: AWS::SNS::TopicPolicy
@@ -51,7 +49,7 @@ Resources:
               Service: events.amazonaws.com
             Action: sns:Publish
             Resource: !Ref SNSTopicAlerts
-            
+
 Outputs:
  TopicsARN:
   Description: The ARN of the metrics notification topic.

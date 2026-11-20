@@ -1,0 +1,5 @@
+{
+    "Parameters": {
+        "AlertEmail": "alert-email@domain.com"
+    }
+}

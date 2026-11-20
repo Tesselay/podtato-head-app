@@ -1,4 +1,5 @@
 deploy/AWS/.aws/
 .*.env
 .*.env.json
+*.params.json
 .zed/settings.json

@@ -37,6 +37,7 @@ SECRETS_ID          := $(APP)/$(ENV)/env
 
 ALERTS_CF           := cf-alerts.yaml
 ALERTS_STACK		:= $(PROJECT)-alerts
+ALERTS_PARAMS       := cf-alerts.params.json
 
 NETWORK_CF          := cf-network.yaml
 NETWORK_STACK       := $(PROJECT)-network
@@ -149,7 +150,7 @@ deploy-alerts:
 		--stack-name $(ALERTS_STACK) \
 		--capabilities CAPABILITY_IAM \
 		--no-fail-on-empty-changeset \
-		--parameter-overrides ProjectName=$(PROJECT) SecretsStackName=$(SECRETS_STACK) \
+		--parameter-overrides ProjectName=$(PROJECT) file://$(ALERTS_PARAMS) \
 		--tags project=$(PROJECT)
 
 deploy-network:
