@@ -1,0 +1,60 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  SNS stack to receive CloudWatch alerts.
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: practice-pha
+    AllowedPattern: "^[a-z0-9-]+$"
+    Description: Prefix for resource names.
+  SecretsStackName:
+    Type: String
+    Description: Name of the stack deployed from cf-secrets.yaml
+
+Resources:
+  SNSTopicAlerts:
+    Type: AWS::SNS::Topic
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Metrics should not scream into the void; if something breaks, any path for remediation, in this case an administrator, should become aware of it without delay.
+    Properties:
+      TopicName: !Sub ${ProjectName}-alerts
+      DisplayName: !Sub "${ProjectName} alerts"
+      Subscription:
+        - Endpoint: !Sub 
+            - "{{resolve:secretsmanager:${ARN}:SecretString:PHA_SNS_EMAIL}}"
+            - ARN:
+                Fn::ImportValue: !Sub ${SecretsStackName}-SecretsArn
+          Protocol: email
+  SNSTopicPolicyMetrics:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics: 
+        - !Ref SNSTopicAlerts
+      PolicyDocument: 
+        Statement:
+          - Sid: AllowCloudWatchAlarms
+            Effect: Allow
+            Principal:
+              Service: cloudwatch.amazonaws.com
+            Action: sns:Publish
+            Resource: !Ref SNSTopicAlerts
+            Condition:
+              ArnLike:
+                aws:SourceArn: !Sub "arn:${AWS::Partition}:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:*"
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+          - Sid: AllowEventBridgeRules
+            Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sns:Publish
+            Resource: !Ref SNSTopicAlerts
+            
+Outputs:
+ TopicsARN:
+  Description: The ARN of the metrics notification topic.
+  Value: !Ref SNSTopicAlerts
+  Export:
+    Name: !Sub "${AWS::StackName}-AlertTopicArn"

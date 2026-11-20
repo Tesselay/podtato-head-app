@@ -35,6 +35,9 @@ SECRETS_CF          := cf-secrets.yaml
 SECRETS_STACK       := $(PROJECT)-$(APP)-$(ENV)-secrets
 SECRETS_ID          := $(APP)/$(ENV)/env
 
+ALERTS_CF           := cf-alerts.yaml
+ALERTS_STACK		:= $(PROJECT)-alerts
+
 NETWORK_CF          := cf-network.yaml
 NETWORK_STACK       := $(PROJECT)-network
 
@@ -77,12 +80,12 @@ SHELL               := /bin/bash
 
 # ----- Phony Targets ------------------------------------------------------------------
 .PHONY: help init read login sign verify secrets \
-		deploy-secrets deploy-registry deploy-network deploy-ingress deploy-cluster deploy-service \
+		deploy-secrets deploy-registry deploy-alerts deploy-network deploy-ingress deploy-cluster deploy-service \
 		test smoke-test smoke-test-target-group smoke-test-cluster smoke-test-elb availability-test \
 		teardown-all teardown-infrastructure teardown-app \
-		teardown-service teardown-cluster teardown-ingress teardown-registry teardown-network teardown-secrets
+		teardown-service teardown-cluster teardown-ingress teardown-registry teardown-network teardown-secrets teardown-alerts
 
-init: deploy-registry deploy-secrets secrets $(META_ENV_PATH)
+init: deploy-registry deploy-secrets secrets $(META_ENV_PATH) deploy-alerts
 infrastructure: deploy-network deploy-ingress deploy-cluster 
 release: deploy-service
 
@@ -91,7 +94,7 @@ smoke-test: smoke-test-target-group smoke-test-cluster smoke-test-elb
 
 teardown-app: teardown-service 
 teardown-infrastructure: teardown-cluster teardown-ingress teardown-network
-teardown-all: teardown-app teardown-infrastructure teardown-registry teardown-secrets
+teardown-all: teardown-app teardown-infrastructure teardown-alerts teardown-registry teardown-secrets
 
 help:
 	@sed -n '1,/^$$/s/^# \{0,1\}//p' $(firstword $(MAKEFILE_LIST))
@@ -138,6 +141,15 @@ deploy-registry:
 		--capabilities CAPABILITY_IAM \
 		--no-fail-on-empty-changeset \
 		--parameter-overrides ProjectName=$(PROJECT) \
+		--tags project=$(PROJECT)
+
+deploy-alerts:
+	AWS_PROFILE=$(AWS_PROFILE_IAM) aws cloudformation deploy \
+		--template-file $(ALERTS_CF) \
+		--stack-name $(ALERTS_STACK) \
+		--capabilities CAPABILITY_IAM \
+		--no-fail-on-empty-changeset \
+		--parameter-overrides ProjectName=$(PROJECT) SecretsStackName=$(SECRETS_STACK) \
 		--tags project=$(PROJECT)
 
 deploy-network:
@@ -189,6 +201,12 @@ teardown-registry:
 		--stack-name $(REGISTRY_STACK)
 	AWS_PROFILE=$(AWS_PROFILE_IAM) aws cloudformation wait stack-delete-complete \
 		--stack-name $(REGISTRY_STACK)
+
+teardown-alerts:
+	AWS_PROFILE=$(AWS_PROFILE_IAM) aws cloudformation delete-stack \
+		--stack-name $(ALERTS_STACK)
+	AWS_PROFILE=$(AWS_PROFILE_IAM) aws cloudformation wait stack-delete-complete \
+		--stack-name $(ALERTS_STACK)
 
 teardown-network:
 	AWS_PROFILE=$(AWS_PROFILE_IAM) aws cloudformation delete-stack \
