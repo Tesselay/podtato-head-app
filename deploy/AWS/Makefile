@@ -168,7 +168,7 @@ deploy-ingress:
 		--stack-name $(INGRESS_STACK) \
 		--capabilities CAPABILITY_IAM \
 		--no-fail-on-empty-changeset \
-		--parameter-overrides ProjectName=$(PROJECT) NetworkStackName=$(NETWORK_STACK) \
+		--parameter-overrides ProjectName=$(PROJECT) NetworkStackName=$(NETWORK_STACK) AlertsStackName=$(ALERTS_STACK) \
 		--tags project=$(PROJECT)
 
 deploy-cluster:
@@ -250,7 +250,7 @@ smoke-test-elb:
 # acceptance-test:
 
 availability-test:
-	source ../../scripts/availability-test.sh "http://$(ELB)" "pha-cluster" "$(TASKS)"
+	source ./availability-test.sh "http://$(ELB)" "pha-cluster" "$(TASKS)"
 
 
 # ----- Signing ------------------------------------------------------------------------

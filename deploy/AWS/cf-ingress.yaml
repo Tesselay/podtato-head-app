@@ -13,6 +13,9 @@ Parameters:
   NetworkStackName:
     Type: String
     Description: Name of the stack deployed from cf-network.yaml
+  AlertsStackName:
+    Type: String
+    Description: Name of the stack deployed from cf-alerts.yaml
 
 Resources:
   ElasticLoadBalancer:
@@ -79,6 +82,30 @@ Resources:
       Tags:
         - Key: Name
           Value: !Sub ${ProjectName}-sg-alb
+
+  # ----- Monitoring ------------------------------------------------------------------
+  AlarmELBHTTPServerErrors:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: AlarmELBHTTPServerErrors
+      AlarmDescription: HTTP 5xx errors originating from the ELB.
+      Namespace: AWS/ApplicationELB
+      MetricName: HTTPCode_ELB_5XX_Count
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 5
+      DatapointsToAlarm: 3
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      Dimensions:
+        - Name: LoadBalancer
+          Value: !GetAtt ElasticLoadBalancer.LoadBalancerFullName
+      AlarmActions: 
+        - Fn::ImportValue: !Sub ${AlertsStackName}-AlertTopicArn
+      AlarmActions: 
+        - Fn::ImportValue: !Sub ${AlertsStackName}-AlertTopicArn
+        
 
 Outputs:
   LoadBalancerSecurityGroupID:
