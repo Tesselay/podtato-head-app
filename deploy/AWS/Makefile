@@ -150,7 +150,8 @@ deploy-alerts:
 		--stack-name $(ALERTS_STACK) \
 		--capabilities CAPABILITY_IAM \
 		--no-fail-on-empty-changeset \
-		--parameter-overrides ProjectName=$(PROJECT) file://$(ALERTS_PARAMS) \
+		--parameter-overrides ProjectName=$(PROJECT) \
+		--parameter-overrides file://$(ALERTS_PARAMS) \
 		--tags project=$(PROJECT)
 
 deploy-network:
@@ -181,12 +182,13 @@ deploy-cluster:
 		--tags project=$(PROJECT)
 
 deploy-service:
+	@AZs="$$(aws cloudformation list-exports --output text --query "Exports[?Name=='$(NETWORK_STACK)-AvailabilityZones'].Value")"; \
 	AWS_PROFILE=$(AWS_PROFILE_IAM) aws cloudformation deploy \
 		--template-file $(SERVICE_CF) \
 		--stack-name $(SERVICE_STACK) \
 		--capabilities CAPABILITY_IAM \
 		--no-fail-on-empty-changeset \
-		--parameter-overrides ProjectName=$(PROJECT) NetworkStackName=$(NETWORK_STACK) IngressStackName=$(INGRESS_STACK) ClusterStackName=$(CLUSTER_STACK) SecretsStackName=$(SECRETS_STACK) RepositoryURI=$(REPOSITORY_URI) ImageDigest=$(IMAGE_DIGEST) \
+		--parameter-overrides ProjectName=$(PROJECT) NetworkStackName=$(NETWORK_STACK) IngressStackName=$(INGRESS_STACK) ClusterStackName=$(CLUSTER_STACK) SecretsStackName=$(SECRETS_STACK) AlertsStackName=$(ALERTS_STACK) RepositoryURI=$(REPOSITORY_URI) ImageDigest=$(IMAGE_DIGEST) "AvailabilityZones=$$AZs" \
 		--tags project=$(PROJECT) app=$(APP) env=$(ENV)
 
 

@@ -86,8 +86,13 @@ Resources:
   # ----- Monitoring ------------------------------------------------------------------
   AlarmELBHTTPServerErrors:
     Type: AWS::CloudWatch::Alarm
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: ELB failure would be critical.
+        must:
+          - TreatMissingData as notBreaching as no data means no errors.
     Properties:
-      AlarmName: AlarmELBHTTPServerErrors
+      AlarmName: !Sub "CRITICAL: ${AWS::StackName}-AlarmELBHTTPServerErrors"
       AlarmDescription: HTTP 5xx errors originating from the ELB.
       Namespace: AWS/ApplicationELB
       MetricName: HTTPCode_ELB_5XX_Count
@@ -103,11 +108,15 @@ Resources:
           Value: !GetAtt ElasticLoadBalancer.LoadBalancerFullName
       AlarmActions: 
         - Fn::ImportValue: !Sub ${AlertsStackName}-AlertTopicArn
-      AlarmActions: 
+      OKActions: 
         - Fn::ImportValue: !Sub ${AlertsStackName}-AlertTopicArn
-        
 
 Outputs:
+  LoadBalancerFullName:
+    Description: For the ELB observation metrics requiring ECS resources.
+    Value: !GetAtt ElasticLoadBalancer.LoadBalancerFullName
+    Export:
+      Name: !Sub ${AWS::StackName}-LoadBalancerFullName
   LoadBalancerSecurityGroupID:
     Description: For the service stacks' rules between the ALB and their tasks.
     Value: !GetAtt SecurityGroupELB.GroupId
@@ -119,7 +128,7 @@ Outputs:
     Export:
       Name: !Sub ${AWS::StackName}-ListenerArn
   LoadBalancerDNSName:
-    Description: Open http://<this name> in a browser once a domain exists.
+    Description: To open http://<this name> in a browser once a domain exists.
     Value: !GetAtt ElasticLoadBalancer.DNSName
     Export:
       Name: !Sub ${AWS::StackName}-LoadBalancerDnsName

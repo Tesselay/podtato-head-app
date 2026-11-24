@@ -44,6 +44,9 @@ Parameters:
     Type: String
     AllowedPattern: "^sha256:[a-f0-9]{64}$"
     Description: Image digest as sourced from invocation.
+  AvailabilityZones:
+    Type: CommaDelimitedList
+    Description: AZs the service runs in; sourced from network stack
   NetworkStackName:
     Type: String
     Description: Name of the stack deployed from cf-network.yaml
@@ -56,7 +59,11 @@ Parameters:
   SecretsStackName:
     Type: String
     Description: Name of the stack deployed from cf-secrets.yaml
+  AlertsStackName:
+    Type: String
+    Description: Name of the stack deployed from cf-alerts.yaml
 
+Transform: AWS::LanguageExtensions
 Resources:
   # ----- Task Connectivity ------------------------------------------------------------
   SecurityGroupECSTask:
@@ -272,6 +279,164 @@ Resources:
       Tags:
         - Key: Name
           Value: !Sub ${ProjectName}-ecs-service
+
+  # ----- Monitoring -------------------------------------------------------------------
+  AlarmELBHealthyHosts:
+    Type: AWS::CloudWatch::Alarm
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: No reported healthy target would be critical.
+        must:
+          - TreatMissingData as breaching because no data means no target is registered.
+    DependsOn: ECSService
+    Properties:
+      AlarmName: !Sub "CRITICAL: ${AWS::StackName}-AlarmELBHealthyHosts"
+      AlarmDescription: No healthy targets (tasks) in target group
+      Namespace: AWS/ApplicationELB
+      MetricName: HealthyHostCount
+      Statistic: Minimum
+      Period: 60
+      EvaluationPeriods: 2
+      DatapointsToAlarm: 2
+      Threshold: 1
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: breaching
+      Dimensions:
+        - Name: LoadBalancer
+          Value: 
+            Fn::ImportValue: !Sub ${IngressStackName}-LoadBalancerFullName
+        - Name: TargetGroup
+          Value: !GetAtt ELBTargetGroup.TargetGroupFullName
+      AlarmActions:
+        - Fn::ImportValue: !Sub ${AlertsStackName}-AlertTopicArn
+      OKActions: 
+        - Fn::ImportValue: !Sub ${AlertsStackName}-AlertTopicArn
+
+  'Fn::ForEach::AvailabilityZonesLoop':
+    - AvailabilityZone
+    - !Ref AvailabilityZones
+    - 'AlarmELBHealthyHosts&{AvailabilityZone}':
+        Type: AWS::CloudWatch::Alarm
+        Metadata:
+          com.aws.cloudformation.Context:
+            why: Alerts about loss of redundancy; not necessarily critical but still important.
+            must:
+              - TreatMissingData as breaching because no response means no target is registered.
+              - Evaluation done over 3 minutes to give ECS time to start a task.
+        DependsOn: ECSService
+        Properties:
+          AlarmName: !Sub "WARNING: ${AWS::StackName}-AlarmELBHealthyHosts-${AvailabilityZone}"
+          AlarmDescription: !Sub "No healthy targets (tasks) in target group of ${AvailabilityZone}"
+          Namespace: AWS/ApplicationELB
+          MetricName: HealthyHostCount
+          Statistic: Minimum
+          Period: 60
+          EvaluationPeriods: 3
+          DatapointsToAlarm: 3
+          Threshold: 1
+          ComparisonOperator: LessThanThreshold
+          TreatMissingData: breaching
+          Dimensions:
+            - Name: LoadBalancer
+              Value: 
+                Fn::ImportValue: !Sub ${IngressStackName}-LoadBalancerFullName
+            - Name: TargetGroup
+              Value: !GetAtt ELBTargetGroup.TargetGroupFullName
+            - Name: AvailabilityZone
+              Value: !Sub "${AvailabilityZone}"
+          AlarmActions:
+            - Fn::ImportValue: !Sub ${AlertsStackName}-AlertTopicArn
+          OKActions: 
+            - Fn::ImportValue: !Sub ${AlertsStackName}-AlertTopicArn
+      
+  AlarmELBTargetsServerErrors:
+    Type: AWS::CloudWatch::Alarm
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Too many HTTP server errors indicate tasks or hosts are unhealthy.
+        must: 
+          - TreatMissingData as notBreaching as no data means no error. ignore would keep state of last traffic, which is misleading. A "no traffic" incident is handled by healthy hosts alarm. 
+    DependsOn: ECSService
+    Properties:
+      AlarmName: !Sub "CRITICAL: ${AWS::StackName}-AlarmELBTargetsServerErrors"
+      AlarmDescription: Number of HTTP server errors across number of requests to targets.
+      Metrics:
+        - Id: error_percentage
+          Label: "Error count over requests"
+          ReturnData: true
+          Expression: 100*(errors/requests)
+        - Id: errors
+          Label: "Input 5XX errors"
+          ReturnData: false
+          MetricStat:
+            Metric:
+              Namespace: AWS/ApplicationELB
+              MetricName: HTTPCode_Target_5XX_Count
+              Dimensions:
+                - Name: TargetGroup
+                  Value: !GetAtt ELBTargetGroup.TargetGroupFullName
+                - Name: LoadBalancer
+                  Value:
+                    Fn::ImportValue: !Sub ${IngressStackName}-LoadBalancerFullName
+            Stat: Sum
+            Period: 60
+        - Id: requests
+          Label: "Input request count"
+          ReturnData: false
+          MetricStat:
+            Metric:
+              Namespace: AWS/ApplicationELB
+              MetricName: RequestCount
+              Dimensions:
+                - Name: TargetGroup
+                  Value: !GetAtt ELBTargetGroup.TargetGroupFullName
+                - Name: LoadBalancer
+                  Value:
+                    Fn::ImportValue: !Sub ${IngressStackName}-LoadBalancerFullName
+            Stat: Sum
+            Period: 60
+      EvaluationPeriods: 5
+      DatapointsToAlarm: 3
+      Threshold: 5
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - Fn::ImportValue: !Sub ${AlertsStackName}-AlertTopicArn
+      OKActions: 
+        - Fn::ImportValue: !Sub ${AlertsStackName}-AlertTopicArn
+  
+  AlarmELBTargetResponseTime:
+    Type: AWS::CloudWatch::Alarm
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: App is lightweight, high response time means something is wrong.
+        must:
+          - TreatMissingData as notBreaching since no data means no errors.
+          - EvaluateLowSampleCountPercentile as evaluate since the app gets low traffic.
+    DependsOn: ECSService
+    Properties:
+      AlarmName: !Sub "WARNING: ${AWS::StackName}-AlarmELBTargetResponseTime"
+      AlarmDescription: Targets response time exceeds threshold.
+      Namespace: AWS/ApplicationELB
+      MetricName: TargetResponseTime
+      ExtendedStatistic: p95
+      EvaluateLowSampleCountPercentile: evaluate
+      Period: 60
+      EvaluationPeriods: 5
+      DatapointsToAlarm: 5
+      Threshold: 1
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: breaching
+      Dimensions:
+        - Name: LoadBalancer
+          Value: 
+            Fn::ImportValue: !Sub ${IngressStackName}-LoadBalancerFullName
+        - Name: TargetGroup
+          Value: !GetAtt ELBTargetGroup.TargetGroupFullName
+      AlarmActions:
+        - Fn::ImportValue: !Sub ${AlertsStackName}-AlertTopicArn
+      OKActions: 
+        - Fn::ImportValue: !Sub ${AlertsStackName}-AlertTopicArn
 
 Outputs:
   ELBTargetGroup:

@@ -302,7 +302,12 @@ Outputs:
     Export:
       Name: !Sub ${AWS::StackName}-PublicSubnetIds
   AppSubnetIDs:
-    Description: Comma-separated; use Fn::Split in the importing stack.
+    Description: Comma-separated list of app subnets.
     Value: !Join [",", [!Ref AZ1PrivateSubnet, !Ref AZ2PrivateSubnet]]
     Export:
       Name: !Sub ${AWS::StackName}-AppSubnetIds
+  AvailabilityZones:
+    Description: Comma-separated list of AZs.
+    Value: !Join [",", [!Ref AZ1, !Ref AZ2]]
+    Export:
+      Name: !Sub ${AWS::StackName}-AvailabilityZones
