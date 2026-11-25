@@ -291,6 +291,60 @@ Resources:
       RouteTableId: !Ref AZ2RouteTablePrivate
       SubnetId: !Ref AZ2PrivateSubnet
 
+  # ----- Monitoring -------------------------------------------------------------------
+  FlowLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/vpc/flow-logs/${AWS::StackName}"
+      RetentionInDays: 14
+  FlowLogDeliveryRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument: 
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: vpc-flow-logs.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+              ArnLike:
+                aws:SourceArn: !Sub "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:vpc-flow-log/*"
+      Policies:
+        - PolicyName: CloudWatchLogsDeliveryPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - logs:DescribeLogGroups
+                  - logs:DescribeLogStreams
+                Resource: !GetAtt FlowLogGroup.Arn
+  ECSVPCFlowLog:
+    Type: AWS::EC2::FlowLog
+    Properties:
+      ResourceType: VPC
+      ResourceId: !GetAtt VPC.VpcId
+      TrafficType: ALL
+      LogDestinationType: cloud-watch-logs
+      LogGroupName: !Ref FlowLogGroup
+      DeliverLogsPermissionArn: !GetAtt FlowLogDeliveryRole.Arn
+      MaxAggregationInterval: 60
+      LogFormat: >-
+        ${version} ${account-id} ${interface-id} ${srcaddr} ${dstaddr}
+        ${srcport} ${dstport} ${protocol} ${packets} ${bytes}
+        ${start} ${end} ${action} ${log-status}
+        ${vpc-id} ${subnet-id} ${flow-direction}
+        ${ecs-cluster-name} ${ecs-service-name} ${ecs-task-id}
+        ${ecs-task-definition-arn} ${ecs-container-id} ${ecs-second-container-id}
+        ${ecs-container-instance-id}
+
+  
 Outputs:
   VPCID:
     Value: !Ref VPC

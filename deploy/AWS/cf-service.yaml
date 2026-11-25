@@ -35,6 +35,10 @@ Parameters:
     Type: String
     Description: App specific env var to delay runtime startup.
     Default: "0s"
+  DesiredCount:
+    Type: Number
+    Default: 2
+    Description: Baseline number of tasks in ECS service.
   RepositoryURI:
     Type: String
     Description: >-
@@ -251,7 +255,7 @@ Resources:
             Fn::ImportValue: !Sub ${ClusterStackName}-CapacityProviderName
           Weight: 1
       SchedulingStrategy: REPLICA
-      DesiredCount: 2
+      DesiredCount: !Ref DesiredCount
       LoadBalancers:
         - ContainerName: !Ref ProjectName
           ContainerPort: !Ref AppPort
@@ -321,7 +325,7 @@ Resources:
           com.aws.cloudformation.Context:
             why: Alerts about loss of redundancy; not necessarily critical but still important.
             must:
-              - TreatMissingData as breaching because no response means no target is registered.
+              - TreatMissingData as breaching because no data means no target is registered.
               - Evaluation done over 3 minutes to give ECS time to start a task.
         DependsOn: ECSService
         Properties:
@@ -411,7 +415,7 @@ Resources:
       com.aws.cloudformation.Context:
         why: App is lightweight, high response time means something is wrong.
         must:
-          - TreatMissingData as notBreaching since no data means no errors.
+          - TreatMissingData as notBreaching since no data means no requests.
           - EvaluateLowSampleCountPercentile as evaluate since the app gets low traffic.
     DependsOn: ECSService
     Properties:
@@ -426,13 +430,103 @@ Resources:
       DatapointsToAlarm: 5
       Threshold: 1
       ComparisonOperator: GreaterThanThreshold
-      TreatMissingData: breaching
+      TreatMissingData: notBreaching
       Dimensions:
         - Name: LoadBalancer
           Value: 
             Fn::ImportValue: !Sub ${IngressStackName}-LoadBalancerFullName
         - Name: TargetGroup
           Value: !GetAtt ELBTargetGroup.TargetGroupFullName
+      AlarmActions:
+        - Fn::ImportValue: !Sub ${AlertsStackName}-AlertTopicArn
+      OKActions: 
+        - Fn::ImportValue: !Sub ${AlertsStackName}-AlertTopicArn
+
+  AlarmECSMemoryUtilization:
+    Type: AWS::CloudWatch::Alarm
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Tasks should scale before reaching too high memory utilization.
+        must:
+          - TreatMissingData as notBreaching, no data might indicate something being wrong but there are other alarms for task availability issues
+    Properties:
+      AlarmName: !Sub "WARNING: ${AWS::StackName}-AlarmECSMemoryUtilization"
+      AlarmDescription: Memory utilization of tasks is too high
+      Namespace: AWS/ECS
+      MetricName: MemoryUtilization
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 5
+      DatapointsToAlarm: 5
+      Threshold: 80
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      Dimensions:
+        - Name: ClusterName
+          Value: 
+            Fn::ImportValue: !Sub ${ClusterStackName}-ClusterName
+        - Name: ServiceName
+          Value: !GetAtt ECSService.Name
+      AlarmActions:
+        - Fn::ImportValue: !Sub ${AlertsStackName}-AlertTopicArn
+      OKActions: 
+        - Fn::ImportValue: !Sub ${AlertsStackName}-AlertTopicArn
+
+  AlarmECSCPUUtilization:
+    Type: AWS::CloudWatch::Alarm
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Tasks should scale before reaching too high CPU utilization.
+        must:
+          - TreatMissingData as notBreaching, no data might indicate something being wrong but there are other alarms for task availability issues
+    Properties:
+      AlarmName: !Sub "WARNING: ${AWS::StackName}-AlarmECSCPUUtilization"
+      AlarmDescription: CPU utilization of tasks is too high
+      Namespace: AWS/ECS
+      MetricName: CPUUtilization
+      Statistic: Average
+      Period: 60
+      EvaluationPeriods: 5
+      DatapointsToAlarm: 5
+      Threshold: 80
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      Dimensions:
+        - Name: ClusterName
+          Value: 
+            Fn::ImportValue: !Sub ${ClusterStackName}-ClusterName
+        - Name: ServiceName
+          Value: !GetAtt ECSService.Name
+      AlarmActions:
+        - Fn::ImportValue: !Sub ${AlertsStackName}-AlertTopicArn
+      OKActions: 
+        - Fn::ImportValue: !Sub ${AlertsStackName}-AlertTopicArn
+
+  AlarmECSRunningTaskCount:
+    Type: AWS::CloudWatch::Alarm
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: There should always be a minimum of tasks running
+        must:
+          - TreatMissingData as breaching since missing data would indicate tasks not being available, which this alarm monitors
+    Properties:
+      AlarmName: !Sub "WARNING: ${AWS::StackName}-AlarmECSRunningTaskCount"
+      AlarmDescription: Less tasks than the minimum are running
+      Namespace: ECS/containerInsights
+      MetricName: RunningTaskCount
+      Statistic: Average
+      Period: 60
+      EvaluationPeriods: 5
+      DatapointsToAlarm: 5
+      Threshold: !Ref DesiredCount
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: breaching
+      Dimensions:
+        - Name: ClusterName
+          Value: 
+            Fn::ImportValue: !Sub ${ClusterStackName}-ClusterName
+        - Name: ServiceName
+          Value: !GetAtt ECSService.Name
       AlarmActions:
         - Fn::ImportValue: !Sub ${AlertsStackName}-AlertTopicArn
       OKActions: 

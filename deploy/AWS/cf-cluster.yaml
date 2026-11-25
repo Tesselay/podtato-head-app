@@ -27,6 +27,9 @@ Parameters:
   NetworkStackName:
     Type: String
     Description: Name of the stack deployed from cf-network.yaml
+  AlertsStackName:
+    Type: String
+    Description: Name of the stack deployed from cf-alerts.yaml
 
 Resources:
   # ----- Cluster and capacity ---------------------------------------------------------
@@ -163,6 +166,7 @@ Resources:
             #!/bin/bash
             echo ECS_CLUSTER=${ECSCluster} >> /etc/ecs/ecs.config
             echo ECS_AWSVPC_BLOCK_IMDS=true >> /etc/ecs/ecs.config
+
   SecurityGroupEC2:
     Type: AWS::EC2::SecurityGroup
     Metadata:
@@ -184,6 +188,137 @@ Resources:
         - Key: Name
           Value: !Sub ${ProjectName}-sg-host
 
+  # ----- Monitoring -------------------------------------------------------------------
+  AlarmASGInService:
+    Type: AWS::CloudWatch::Alarm
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Desired capacity should always be reached .
+        must: 
+          - TreatMissingData as breaching because no data means no instance is registered.
+    Properties:
+      AlarmName: !Sub "WARNING: ${AWS::StackName}-AlarmASGInService"
+      AlarmDescription: Number of healthy hosts does not meet desired capacity
+      Metrics:
+        - Id: unhealthy_hosts
+          Label: "Unhealthy hosts in ASG"
+          ReturnData: true
+          Expression: desired - inservice
+        - Id: desired
+          Label: "Desired capacity"
+          ReturnData: false
+          MetricStat:
+            Metric:
+              Namespace: AWS/AutoScaling
+              MetricName: GroupDesiredCapacity
+              Dimensions:
+                - Name: AutoScalingGroupName
+                  Value: !Ref EC2AutoScalingGroup
+            Stat: Average
+            Period: 60
+        - Id: inservice
+          Label: "Instances in service"
+          ReturnData: false
+          MetricStat:
+            Metric:
+              Namespace: AWS/AutoScaling
+              MetricName: GroupInServiceInstances
+              Dimensions:
+                - Name: AutoScalingGroupName
+                  Value: !Ref EC2AutoScalingGroup
+            Stat: Average
+            Period: 60
+      EvaluationPeriods: 10
+      DatapointsToAlarm: 10
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: breaching
+      AlarmActions:
+        - Fn::ImportValue: !Sub ${AlertsStackName}-AlertTopicArn
+      OKActions: 
+        - Fn::ImportValue: !Sub ${AlertsStackName}-AlertTopicArn  
+  
+  AlarmASGStatus:
+    Type: AWS::CloudWatch::Alarm
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: ASG status checks should never fail.
+        must:
+          - TreatMissingData as notBreaching since no data means no instances, which is covered by another alarm.
+    Properties:
+      AlarmName: !Sub "WARNING: ${AWS::StackName}-AlarmASGStatus"
+      AlarmDescription: Hosts that failed the ASG status check
+      Namespace: AWS/EC2
+      MetricName: StatusCheckFailed
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 2
+      DatapointsToAlarm: 2
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      Dimensions:
+        - Name: AutoScalingGroupName
+          Value: !Ref EC2AutoScalingGroup
+      AlarmActions:
+        - Fn::ImportValue: !Sub ${AlertsStackName}-AlertTopicArn
+      OKActions: 
+        - Fn::ImportValue: !Sub ${AlertsStackName}-AlertTopicArn
+
+  AlarmASGCPUUtilization:
+    Type: AWS::CloudWatch::Alarm
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Too high CPU utilization impacts performance of the app.
+        must:
+          - TreatMissingData as notBreaching, no data might indicate something being wrong but there are other alarms for host availability issues
+    Properties:
+      AlarmName: !Sub "WARNING: ${AWS::StackName}-AlarmASGCPUUtilization"
+      AlarmDescription: Hosts with too high CPU utilization
+      Namespace: AWS/EC2
+      MetricName: CPUUtilization
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 3
+      DatapointsToAlarm: 3
+      Threshold: 80
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      Dimensions:
+        - Name: AutoScalingGroupName
+          Value: !Ref EC2AutoScalingGroup
+      AlarmActions:
+        - Fn::ImportValue: !Sub ${AlertsStackName}-AlertTopicArn
+      OKActions: 
+        - Fn::ImportValue: !Sub ${AlertsStackName}-AlertTopicArn
+
+  AlarmECSFilesystemUtilization:
+    Type: AWS::CloudWatch::Alarm
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Too high filesystem utilization impacts performance and the app should not write heavily to it anyway.
+        must:
+          - TreatMissingData as notBreaching, no data might indicate something being wrong but there are other alarms for host availability issues
+    Properties:
+      AlarmName: !Sub "WARNING: ${AWS::StackName}-AlarmECSFilesystemUtilization"
+      AlarmDescription: Tasks with too high filesystem utilization
+      Namespace: ECS/containerInsights
+      MetricName: InstanceDataFilesystemUtilization
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 5
+      DatapointsToAlarm: 5
+      Threshold: 90
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      Dimensions:
+        - Name: ClusterName
+          Value: !Ref ECSCluster
+      AlarmActions:
+        - Fn::ImportValue: !Sub ${AlertsStackName}-AlertTopicArn
+      OKActions: 
+        - Fn::ImportValue: !Sub ${AlertsStackName}-AlertTopicArn
+    
 Outputs:
   ClusterName:
     Description: For the services' Cluster property and the Makefile's smoke tests.

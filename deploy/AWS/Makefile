@@ -178,7 +178,7 @@ deploy-cluster:
 		--stack-name $(CLUSTER_STACK) \
 		--capabilities CAPABILITY_IAM \
 		--no-fail-on-empty-changeset \
-		--parameter-overrides ProjectName=$(PROJECT) NetworkStackName=$(NETWORK_STACK) \
+		--parameter-overrides ProjectName=$(PROJECT) NetworkStackName=$(NETWORK_STACK) AlertsStackName=$(ALERTS_STACK) \
 		--tags project=$(PROJECT)
 
 deploy-service:
