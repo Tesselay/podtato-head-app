@@ -113,7 +113,6 @@ Resources:
       Roles:
         - !Ref EC2InstanceRole
 
-  # No DesiredCapacity: the capacity provider's managed scaling owns it.
   EC2AutoScalingGroup:
     Type: AWS::AutoScaling::AutoScalingGroup
     Metadata:
@@ -122,6 +121,8 @@ Resources:
           src: infer
           conf: low
           note: "rationale not documented"
+        must:
+          - No DesiredCapacity since the capacity provider's managed scaling owns it.
     Properties:
       LaunchTemplate:
         LaunchTemplateId: !Ref EC2LaunchTemplate
@@ -325,6 +326,11 @@ Outputs:
     Value: !Ref ECSCluster
     Export:
       Name: !Sub ${AWS::StackName}-ClusterName
+  AutoScalingGroupName:
+    Description: For CloudWatch dashboard.
+    Value: !Ref EC2AutoScalingGroup
+    Export:
+      Name: !Sub ${AWS::StackName}-AutoScalingGroupName
   CapacityProviderName:
     Description: >-
       For the services' capacity provider strategy. Its association with the cluster is

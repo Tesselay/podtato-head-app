@@ -512,7 +512,7 @@ Resources:
     Properties:
       AlarmName: !Sub "WARNING: ${AWS::StackName}-AlarmECSRunningTaskCount"
       AlarmDescription: Less tasks than the minimum are running
-      Namespace: ECS/containerInsights
+      Namespace: ECS/ContainerInsights
       MetricName: RunningTaskCount
       Statistic: Average
       Period: 60
@@ -534,5 +534,15 @@ Resources:
 
 Outputs:
   ELBTargetGroup:
-    Description: For make smoke-test-target-group.
+    Description: For smoke test
     Value: !Ref ELBTargetGroup
+  ELBTargetGroupFullName:
+    Description: For CloudWatch dashboard
+    Value: !GetAtt ELBTargetGroup.TargetGroupFullName
+    Export:
+      Name: !Sub "${AWS::StackName}-ELBTargetGroupFullName"
+  ServiceName:
+    Description: For CloudWatch dashboard
+    Value: !GetAtt ECSService.Name
+    Export:
+      Name: !Sub "${AWS::StackName}-ServiceName"

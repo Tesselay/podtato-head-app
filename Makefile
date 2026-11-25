@@ -50,11 +50,10 @@ SHELL               := /bin/bash
 		push push-image sign release \
 		test smoke-test availability-test \
 		local build-local run-local teardown-local \
-		local-test build-test run-test local-smoke-test teardown-test
+		local-test local-build-test local-run-test local-smoke-test local-teardown-test
 
 all: init login push-image sign verify infrastructure release
 push: push-image sign
-test: smoke-test availability-test
 local: build-local run-local teardown-local
 local-test: build-test run-test smoke-test teardown-test
 
@@ -84,15 +83,15 @@ teardown-local:
 
 # ----- Test ---------------------------------------------------------------------------
 # Ideally would set `ENV=test` and re-process file
-build-test:
+local-build-test:
 	docker buildx build -t $(APP):test .
 
-run-test: build-test
+local-run-test: build-test
 	docker run --rm -it --env-file $(TEST_ENV_PATH) -p 8090:8090 --name $(CONTAINER)-test -d $(APP):test
 
-smoke-test: run-test
+local-smoke-test: run-test
 	curl -s -w "%{http_code}\n" http://127.0.0.1:8090/readyz
 	curl -s -w "%{http_code}\n" http://127.0.0.1:8090/healthz
 
-teardown-test:
+local-teardown-test:
 	docker container kill $(CONTAINER)-test

@@ -51,6 +51,9 @@ CLUSTER_STACK       := $(PROJECT)-cluster
 SERVICE_CF          := cf-service.yaml
 SERVICE_STACK       := $(PROJECT)-$(APP)-$(ENV)-service
 
+MONITORING_CF       := cf-monitoring.yaml
+MONITORING_STACK    := $(PROJECT)-monitoring
+
 COSIGN_PUB          := cosign.pub
 COSIGN_KEY          := awskms:///alias/$(PROJECT)-cosign
 
@@ -65,13 +68,13 @@ IMAGE_DIGEST        ?= $(shell aws ecr describe-images \
                             --query "imageDetails[0].imageDigest" --output text)
 TARGETGROUP         ?= $(shell aws cloudformation describe-stacks \
                             --stack-name $(SERVICE_STACK) \
-                            --query "Stacks[0].Outputs[?OutputKey=='ElbTargetGroup'].OutputValue" \
+                            --query "Stacks[0].Outputs[?OutputKey=='ELBTargetGroup'].OutputValue" \
                             --output text)
 TASKS               ?= $(shell aws ecs list-tasks --cluster pha-cluster \
                             --query 'taskArns[]' --output text --no-cli-pager)
 ELB                 ?= $(shell aws cloudformation describe-stacks \
                             --stack-name $(INGRESS_STACK) \
-                            --query "Stacks[0].Outputs[?OutputKey=='LoadBalancerDnsName'].OutputValue" \
+                            --query "Stacks[0].Outputs[?OutputKey=='LoadBalancerDNSName'].OutputValue" \
                             --output text)
 
 SHELL               := /bin/bash
@@ -81,21 +84,21 @@ SHELL               := /bin/bash
 
 # ----- Phony Targets ------------------------------------------------------------------
 .PHONY: help init read login sign verify secrets \
-		deploy-secrets deploy-registry deploy-alerts deploy-network deploy-ingress deploy-cluster deploy-service \
+		deploy-secrets deploy-registry deploy-alerts deploy-network deploy-ingress deploy-cluster deploy-service deploy-dashboard \
 		test smoke-test smoke-test-target-group smoke-test-cluster smoke-test-elb availability-test \
 		teardown-all teardown-infrastructure teardown-app \
 		teardown-service teardown-cluster teardown-ingress teardown-registry teardown-network teardown-secrets teardown-alerts
 
-init: deploy-registry deploy-secrets secrets $(META_ENV_PATH) deploy-alerts
+init: deploy-registry deploy-secrets secrets $(META_ENV_PATH) deploy-alerts 
 infrastructure: deploy-network deploy-ingress deploy-cluster 
-release: deploy-service
+release: deploy-service deploy-dashboard
 
 test: smoke-test availability-test
-smoke-test: smoke-test-target-group smoke-test-cluster smoke-test-elb
+smoke-test: smoke-test-target-group smoke-test-cluster smoke-test-elb health-test
 
 teardown-app: teardown-service 
 teardown-infrastructure: teardown-cluster teardown-ingress teardown-network
-teardown-all: teardown-app teardown-infrastructure teardown-alerts teardown-registry teardown-secrets
+teardown-all: teardown-dashboard teardown-app teardown-infrastructure teardown-alerts teardown-registry teardown-secrets
 
 help:
 	@sed -n '1,/^$$/s/^# \{0,1\}//p' $(firstword $(MAKEFILE_LIST))
@@ -191,6 +194,15 @@ deploy-service:
 		--parameter-overrides ProjectName=$(PROJECT) NetworkStackName=$(NETWORK_STACK) IngressStackName=$(INGRESS_STACK) ClusterStackName=$(CLUSTER_STACK) SecretsStackName=$(SECRETS_STACK) AlertsStackName=$(ALERTS_STACK) RepositoryURI=$(REPOSITORY_URI) ImageDigest=$(IMAGE_DIGEST) "AvailabilityZones=$$AZs" \
 		--tags project=$(PROJECT) app=$(APP) env=$(ENV)
 
+deploy-dashboard:
+	AWS_PROFILE=$(AWS_PROFILE_IAM) aws cloudformation deploy \
+		--template-file $(MONITORING_CF) \
+		--stack-name $(MONITORING_STACK) \
+		--capabilities CAPABILITY_IAM \
+		--no-fail-on-empty-changeset \
+		--parameter-overrides ProjectName=$(PROJECT) IngressStackName=$(INGRESS_STACK) ServiceStackName=$(SERVICE_STACK) ClusterStackName=$(CLUSTER_STACK) \
+		--tags project=$(PROJECT)
+
 
 # ----- Teardown -----------------------------------------------------------------------
 teardown-secrets:
@@ -235,6 +247,12 @@ teardown-ingress:
 	AWS_PROFILE=$(AWS_PROFILE_IAM) aws cloudformation wait stack-delete-complete \
 		--stack-name $(INGRESS_STACK)
 
+teardown-dashboard:
+	AWS_PROFILE=$(AWS_PROFILE_IAM) aws cloudformation delete-stack \
+		--stack-name $(MONITORING_STACK)
+	AWS_PROFILE=$(AWS_PROFILE_IAM) aws cloudformation wait stack-delete-complete \
+		--stack-name $(MONITORING_STACK)
+
 
 # ----- Testing ------------------------------------------------------------------------
 smoke-test-target-group:
@@ -248,6 +266,9 @@ smoke-test-cluster:
 
 smoke-test-elb:
 	curl -o /dev/null -s -w "HTTP Return Code: %{http_code}\n" http://$(ELB)/
+
+health-test:
+	curl -o /dev/null -s -w "HTTP Return Code: %{http_code}\n" http://$(ELB)/healthz
 
 # acceptance-test:
 

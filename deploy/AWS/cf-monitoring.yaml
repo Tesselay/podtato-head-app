@@ -1,0 +1,99 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Monitoring dashboard stack.
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: practice-pha
+    AllowedPattern: "^[a-z0-9-]+$"
+    Description: Prefix for resource names.
+  IngressStackName:
+    Type: String
+  ServiceStackName:
+    Type: String
+  ClusterStackName:
+    Type: String
+ 
+Resources:
+  MonitoringDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub "${ProjectName}-dashboard"
+      DashboardBody: !Sub
+        - |
+          {
+            "widgets": [
+              {
+                "type": "metric", "x": 0, "y": 0, "width": 12, "height": 6,
+                "properties": {
+                  "title": "ALB: requests and 5XX",
+                  "region": "${AWS::Region}", "view": "timeSeries", "period": 60, "stat": "Sum",
+                  "metrics": [
+                    ["AWS/ApplicationELB", "RequestCount", "LoadBalancer", "${LoadBalancer}", {"label": "Requests"}],
+                    ["AWS/ApplicationELB", "HTTPCode_ELB_5XX_Count", "LoadBalancer", "${LoadBalancer}", {"label": "ELB 5XX", "yAxis": "right"}],
+                    ["AWS/ApplicationELB", "HTTPCode_Target_5XX_Count", "TargetGroup", "${TargetGroup}", "LoadBalancer", "${LoadBalancer}", {"label": "Target 5XX", "yAxis": "right"}]
+                  ]
+                }
+              },
+              {
+                "type": "metric", "x": 12, "y": 0, "width": 12, "height": 6,
+                "properties": {
+                  "title": "Target response time (p50 / p95)",
+                  "region": "${AWS::Region}", "view": "timeSeries", "period": 60,
+                  "metrics": [
+                    ["AWS/ApplicationELB", "TargetResponseTime", "TargetGroup", "${TargetGroup}", "LoadBalancer", "${LoadBalancer}", {"stat": "p50", "label": "p50"}],
+                    ["AWS/ApplicationELB", "TargetResponseTime", "TargetGroup", "${TargetGroup}", "LoadBalancer", "${LoadBalancer}", {"stat": "p95", "label": "p95"}]
+                  ],
+                  "yAxis": {"left": {"label": "seconds", "min": 0}}
+                }
+              },
+              {
+                "type": "metric", "x": 0, "y": 6, "width": 8, "height": 6,
+                "properties": {
+                  "title": "Healthy targets vs running tasks",
+                  "region": "${AWS::Region}", "view": "timeSeries", "period": 60,
+                  "metrics": [
+                    ["AWS/ApplicationELB", "HealthyHostCount", "TargetGroup", "${TargetGroup}", "LoadBalancer", "${LoadBalancer}", {"stat": "Minimum", "label": "Healthy targets"}],
+                    ["ECS/ContainerInsights", "RunningTaskCount", "ClusterName", "${Cluster}", "ServiceName", "${Service}", {"stat": "Average", "label": "Running tasks"}]
+                  ],
+                  "yAxis": {"left": {"min": 0}}
+                }
+              },
+              {
+                "type": "metric", "x": 8, "y": 6, "width": 8, "height": 6,
+                "properties": {
+                  "title": "ECS service CPU / memory (%)",
+                  "region": "${AWS::Region}", "view": "timeSeries", "period": 60,
+                  "metrics": [
+                    ["AWS/ECS", "CPUUtilization", "ClusterName", "${Cluster}", "ServiceName", "${Service}", {"stat": "Average", "label": "CPU avg"}],
+                    ["AWS/ECS", "MemoryUtilization", "ClusterName", "${Cluster}", "ServiceName", "${Service}", {"stat": "Maximum", "label": "Memory max"}]
+                  ],
+                  "yAxis": {"left": {"min": 0, "max": 100}},
+                  "annotations": {"horizontal": [{"label": "Alarm threshold", "value": 80}]}
+                }
+              },
+              {
+                "type": "metric", "x": 16, "y": 6, "width": 8, "height": 6,
+                "properties": {
+                  "title": "ASG: desired vs in service, host CPU",
+                  "region": "${AWS::Region}", "view": "timeSeries", "period": 300,
+                  "metrics": [
+                    ["AWS/AutoScaling", "GroupDesiredCapacity", "AutoScalingGroupName", "${Asg}", {"stat": "Average", "label": "Desired"}],
+                    ["AWS/AutoScaling", "GroupInServiceInstances", "AutoScalingGroupName", "${Asg}", {"stat": "Average", "label": "In service"}],
+                    ["AWS/EC2", "CPUUtilization", "AutoScalingGroupName", "${Asg}", {"stat": "Average", "label": "Host CPU %", "yAxis": "right"}]
+                  ]
+                }
+              }
+            ]
+          }
+        - LoadBalancer:
+            Fn::ImportValue: !Sub "${IngressStackName}-LoadBalancerFullName"
+          TargetGroup:
+            Fn::ImportValue: !Sub "${ServiceStackName}-ELBTargetGroupFullName"
+          Service:
+            Fn::ImportValue: !Sub "${ServiceStackName}-ServiceName"
+          Cluster:
+            Fn::ImportValue: !Sub "${ClusterStackName}-ClusterName"
+          Asg:
+            Fn::ImportValue: !Sub "${ClusterStackName}-AutoScalingGroupName"
