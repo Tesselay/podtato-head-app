@@ -99,6 +99,46 @@ AWS offers tags, and of course names, to define and group resources. Thus:
 **Naming** - Every resource name is prefixed with `pha-`, short for "podtato-head-app".
 **Tags** - Every resource is tagged with `Project: practice-pha`.
 
+## AWS Well-Architected Framework
+
+### Operational Excellence
+
+Operational Excellence mentions the ability to run workloads effectively, gain insights into their operations and to continuously improve processes and procedures. All three are given through the use of auto-scaling, automatically adjusting the compute environment to keep the app running effectively. Through the use of CloudWatch alerts, a CloudWatch Dashboard and container, as well as VPC flow logs, sufficient insights into the operational quality of the app's infrastructure is gained, which supports the continuous improvement of the supporting processes and procedures.
+
+This can be improved further by using EventBridge to further monitor specific deployment events and add automatic remediation of errors.
+
+### Security
+
+The Security pillar desribes taking advantage of cloud technologies to protect data, systems and assets. Through the use of KMS based encryption keys, image signing supported and displayed within ECR, and storage of app secrets within Secrets Manager, well integrated cloud technologies are sufficiently used for security purposes.
+
+This can be improved further by:
+- Using KMS keys for logs, secrets or SNS
+- Using PrivateLink to keep communication to regional/global AWS services out of the Internet
+- Using ECR's built-in image signing instead of cosign to leverage better integration (not necessarily better security)
+
+### Reliability
+
+The Reliability pillar describes the ability of a workload to perform its intended function correctly and consistently when it's expected to, including operation and testing through its lifecycle. This is sufficiently provided through the use of a Load Balancer in combination with auto-scaling with an EC2 Auto Scaling Group and ECS, the app can support workloads through the loss of hosts, instances and a whole Availability Zone. Testing is provided through the local Makefiles, covering a wide surface area.
+
+This can be further improved by deploying the application to multiple regions and leveraging Global Accelerator, as well as Aurora Global for an eventual Relational Database layer, adding regional resilience and failover.
+Testing can be further improved by establishing a cloud/server layer CI/CD pipeline for an automated testing workflow and increasing the surface area that tests cover, e.g. by forcing the application to return HTTP 5XX codes to test reactivity to 5XX errors, filling the filesystem with large dummy files to test reactivity to filesystem overfilling or tearing down EC2 hosts in addition to container instances to test recovery in both cases.
+
+### Performance Efficiency
+
+The Performance Efficiency pillar describes the usage of computing resources to meet system requirements and to maintain that efficiency as demand changes. Due to the use of automatic scaling and serverless resources like Secrets Manager, KMS or ECS (control plane), computing resources are already partly used as efficiently as possible. EC2 hosts use the smallest host size possible and the image is developed to have a small footprint. 
+
+Nonetheless both the compute host and container instance can be improved for efficiency, especially since both rely on manual adjustment for horizontal demand changes. The compute host layer specifically can be improved by leveraging Fargate instead of self-managed EC2 hosts. This additionally improves Reliability and Operational Excellence since it offloads the management and auto-scaling of the host layer to AWS.
+
+### Cost Optimization
+
+The Cost Optimization pillar describes delivering business value at the lowest price point. This is provided through the ability to easily deploy and teardown the whole stack with a single Make command. 
+
+This can be improved by leveraging on-demand services like Fargate or by deploying a NAT gateway in only 1 Availability Zone, since it is the most costly resource. This would come at the cost of Reliability though.
+
+### Sustainability
+
+The Sustainability pillar describes essentially the same qualities as the Performance Efficiency pillar and thus I refer to it.
+
 ## Learnings
 
 ### CloudFormation JSON vs. YAML
